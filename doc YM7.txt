@@ -1,0 +1,85 @@
+; format YM7
+;
+; offset		description							longueur en bytes										dans buzztone.ym7
+
+;   00			YM7!								4														
+;   04			LeOnArD!							8
+;   0C			00 02 version ?						2
+;   0E			00 02 version ?						2
+;   10			nombre de frames totale				4														$00004C90
+;   14			frequence replay (50 hz)			2														$0032
+;   16			mask effet sur les voies			2		A= bit 0 / B = bit 1 / C = bit 2				$0006 = effet sur voies A, B & C / bit 3 = sync buzzer / bit 4 = D
+
+;   18			nombre de samples DG 0 à 16			2														00 03
+;   1A			N x taille du sample.w,repetition	2+2														$0272,$0001, $0332,$0001,  $06ad,$0001, début des samples en $26. taille des samples = $272+$332+$6ad=c51 => + 26= C77
+																											C35810, C3617A, C36BA4 / 1er = $272+1784 / 2eme = $332+1784
+
+;   ??			nombre de SID
+;				datas SID
+
+;   ??			nombre de buzzer
+;				datas buzzer
+
+;   ??			nombre de sinus SID
+;				datas sinus sid
+
+;	??			word=64
+;   ??			.w									2										$0CC3	; ecart entre les frames
+;   ?? 			.w									2									 	$0CC1	; ecart entre les frames du dernier bloc ?
+;	??			.w									2										0006 = nombre de blocs compressés ?
+;	??			.w * x								2										taille du bloc  $06B7, $06Fa, $0870, $06DC, $0666, $0888, total = $2BEB => taille totale = nombre de blocs lz4 -1 * ecart entre les frames + ecart entre les frames du dernier bloc 
+offset $C92
+
+...
+
+blocs compressés en LZ4
+
+1 er bloc :
+00C54C7E 1000 0100 723C 923F EF92 3FEF 0C00 0106
+size packed = $6B7
+
+dest = 3E528
+
+decomp:
+1ers octets lus = 10, puis ecriture de 1 octet d: 00
+puis
+lis 01.b puis 00.b 
+puis ecris 4 octets
+puis ecris 7 octets
+ecris 6 octets
+ecris 5 octets
+
+resultat decomp:
+
+0003E528 0000 0000 003C 923F EF92 3FEF 0000 0000  .....<.?..?.....
+0003E538 003C 0000 0000 001E 923F EF92 3FEF 0000  .<.......?..?...
+0003E548 0000 003C 0000 0000 001E 923F EF92 3FEF  ...<.......?..?.
+0003E558 923F EF92 3FEF 0000 0000 001E 923F EF92  .?..?........?..
+0003E568 3FEF 923F EF92 3FEF 0000 0000 0022 0000  ?..?..?......"..
+0003E578 0000 001E 923F EF92 3FEF 923F EF92 3FEF  .....?..?..?..?.
+0003E588 0000 0000 003C 923F EF92 3FEF 0000 0000  .....<.?..?.....
+0003E598 003C 0000 0000 001E 923F EF92 3FEF 0000  .<.......?..?...
+0003E5A8 0000 003C 0000 0000 001E 923F EF92 3FEF  ...<.......?..?.
+0003E5B8 923F EF92 3FEF 0000 0000 001E 923F EF92  .?..?........?..
+0003E5C8 3FEF 923F EF92 3FEF 0000 0000 0022 0000  ?..?..?......"..
+0003E5D8 0000 001E 923F EF92 3FEF 923F EF92 3FEF  .....?..?..?..?.
+0003E5E8 0000 0000 0050 AA3F 0CAA 3F0C 0000 0000  .....P.?..?.....
+0003E5F8 0050 0000 0000 0028 AA3F 0CAA 3F0C 0000  .P.....(.?..?...
+0003E608 0000 0050 0000 0000 0028 AA3F 0CAA 3F0C  ...P.....(.?..?.
+0003E618 AA3F 0CAA 3F0C 0000 0000 0028 AA3F 0CAA  .?..?......(.?..
+0003E628 3F0C AA3F 0CAA 3F0C 0000 0000 005A 0000  ?..?..?......Z..
+0003E638 0000 002D AA3F 0CAA 3F0C AA3F 0CAA 3F0C  ...-.?..?..?..?.
+0003E648 0000 0000 0050 AA3F 0CAA 3F0C 0000 0000  .....P.?..?.....
+0003E658 0050 0000 0000 0028 AA3F 0CAA 3F0C 0000  .P.....(.?..?...
+
+
+;------------------
+lors du run
+;------------------
+
+jusqu'a 23 registres:
+	- 14 de base : 0 a 13
+	- 2 par voie si effet => 6  
+	- 2 pour Sync Buzzer
+	- 1 pour D
+
