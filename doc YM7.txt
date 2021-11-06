@@ -13,7 +13,7 @@
 ;   18			nombre de samples DG 0 à 16			2														00 03
 ;   1A			N x taille du sample.w,repetition	2+2														$0272,$0001, $0332,$0001,  $06ad,$0001, début des samples en $26. taille des samples = $272+$332+$6ad=c51 => + 26= C77
 																											C35810, C3617A, C36BA4 / 1er = $272+1784 / 2eme = $332+1784
-
+; --- arrondi a 2
 ;   ??			nombre de SID
 ;				datas SID
 
@@ -25,8 +25,8 @@
 
 ;	??			word=64
 ;   ??			.w									2										$0CC3	; ecart entre les frames
-;   ?? 			.w									2									 	$0CC1	; ecart entre les frames du dernier bloc ?
-;	??			.w									2										0006 = nombre de blocs compressés ?
+;   ?? 			.w									2									 	$0CC1	; ecart entre les frames du dernier bloc 
+;	??			.w									2										0006 = nombre de blocs compressés 
 ;	??			.w * x								2										taille du bloc  $06B7, $06Fa, $0870, $06DC, $0666, $0888, total = $2BEB => taille totale = nombre de blocs lz4 -1 * ecart entre les frames + ecart entre les frames du dernier bloc 
 offset $C92
 

@@ -2184,6 +2184,7 @@ PSG_forme_enveloppe_negative:
 	cmp		R1,#1
 	bne		PSG_start_digidrum_test_voie_B_R1
 ; digidrum voie A
+	mov		R4,#0
 	str		R4,PSG_offset_en_cours_digidrum_A
 	
 
@@ -2221,6 +2222,7 @@ PSG_start_digidrum_test_voie_B_R1:
 	cmp		R1,#2
 	bne		PSG_start_digidrum_test_voie_C_R1
 ; digidrum voie B
+	mov		R4,#0
 	str		R4,PSG_offset_en_cours_digidrum_B
 
 
@@ -2257,6 +2259,7 @@ PSG_start_digidrum_test_voie_C_R1:
 	cmp		R1,#3
 	bne		PSG_start_digidrum_no_digidrum_R1
 ; digidrum voie C
+	mov		R4,#0
 	str		R4,PSG_offset_en_cours_digidrum_C
 
 	mov		R1,#1
