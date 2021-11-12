@@ -1,0 +1,1083 @@
+
+algo global
+
+mixage final : 
+
+	  noise & tone channel A & enveloppe A
+	+ noise & tone channel B & enveloppe B
+	+ noise & tone channel C & enveloppe C
+	
+
+
+sous taches:
+- interpretation : 
+- tables utilisées
+	- interpretation :
+	- localisation :
+	- routine qui la fabrique
+
+digidrums : lié a l'enveloppe ! préparation ou application ?
+	/ Gwem : stardust memory ?
+SID-Voice = D = géré par CIA + 2 autres canaux
+	/ Gwem - Gwem camp / stardust memory / Robost
+
+Sinus-Sid = S sur A B C - confirmé
+
+Sync-Buzzer = buzz
+	/ Gwem - flash of the rom
+	travaille sur l'enveloppe avec un timer
+	stop l'enveloppe sur timer
+
+
+buzzer + D = gwem camp
+	
+
+DMACON = $7F3
+
+----------------
+blocs decompresses pour RIP des YM7
+fichier chargée en C42000
+breakpoint en c031ae => A0=adresse YM7 
+
+
+----------------
+
+Tache 1 :
+; transformation des registres en données internes au PSG pour creation samples
+; les registres sont chargés, on les interprete pour préparer le mixage
+; reg0 à reg13
+adresse : 0x00c05ac0
+
+tables : 
+- table_increments_frrequences_0x00c0b348
+- conversion entre la note dans le registre et l'increment avec virgule
+- adresse : 00c0b348 , longueur = 4 * 2^12 = 16384   => FIN = C0F348
+
+$ 5AB3F = 371519 = 5,6689300537109375
+
+freq amiga = 22050 HZ
+nb octets par VBL = 223 mots = 446 octets
+period amiga Audio = DFF0A6 = 160
+
+
+période = 1 / (taux d'échantillonnage * durée d'un cycle de bus)
+period = 3546895 / freq;
+
+
+279,365 
+
+
+freq psg = 2 000 000 / 16 = 125 000
+
+
+faire une table_increments_frrequences_0x00c0b348
+for x=1; x<4096;x++
+
+
+----------------
+
+Tache 2 :
+; fabrication du noise en fonction de aléatoire + fréquence	du noise
+adresse : 0x00c06544
+tables:
+adresse : 0c1c650
+onde carrée ?
+crée par la routine en c03296
+
+=> uniquement si noise actif !
+
+
+algo fabrication table noise :
+                           .data:00c05964 3e 3c 3f ff                      movew #16384-1,%d7
+                           .data:00c05968 70 01                            moveq #1,%d0
+                           .data:00c0596a 74 01                            moveq #1,%d2
+                           .data:00c0596c 43 f9 00 c1 c6 50                lea table_noise_0x00c1c650,%a1
+boucle:						   
+                           .data:00c05972 32 00                            movew %d0,%d1
+                           .data:00c05974 e6 49                            lsrw #3,%d1
+                           .data:00c05976 b1 41                            eorw %d0,%d1
+                           .data:00c05978 c2 42                            andw %d2,%d1
+                           .data:00c0597a d2 41                            addw %d1,%d1
+                           .data:00c0597c 48 41                            swap %d1
+                           .data:00c0597e b3 80                            eorl %d1,%d0
+                           .data:00c05980 e2 88                            lsrl #1,%d0
+                           .data:00c05982 55 c3                            scs %d3						; si carry, D3=FF, sinon D3=0
+                           .data:00c05984 12 c3                            moveb %d3,%a1@+
+                           .data:00c05986 51 cf ff ea                      dbf %d7,0x00c05972
+
+
+
+
+----------------
+Tache 3 :
+mixage voie A + noise
+mixage voie B + noise
+mixage voie C + noise
+
+adresse : 0x00c05c38
+
+la frequence a deja été appliquée sur le noise
+on applique la frequence uniquement sur l'onde carrée
+pour fabriquer l'onde carrée, on incremente une valeur, avec juste la partie a virgule de l'increment
+si minus ( negatif ) , on met un octet =$FF / -1
+
+
+4 routines : 
+routine1 = Noise AND Tone/Note
+routine2 = Noise uniquement ( pas de Note/Tone)
+routine3 = Note/tone uniquement ( pas de Noise )
+routine4 = tout à $FF : ni Tone / ni Noise => -1 
+
+
+----------------
+Tache 4:
+preparation application de l'enveloppe
+on parcourt la bonne enveloppe, à la fréquence de l'enveloppe. et on met le résultat dans $0c2d550
+
+
+adresse routine = $0c05e1c
+
+=>Sync-Buzzer ici
+
+liste de pointeurs sur les enveloppes : c1c610
+
+les index des enveloppes sont à +32 car la repetition est à +32
+donc au final on démarre à -32 et on boucle à 0 (zéro)
+
+len = $AC0 = 2752 = 32 * 86 / pourquoi 86 fois 32 ? maximal increment = 5,xxx => en cas de dépassement.
+00: 00C20830 : en haut , descend, reste en bas
+01: 00C212F0 : en haut , descend, reste en bas
+02: 00C21DB0 : en haut , descend, reste en bas 
+03: 00C22870 : en haut , descend, reste en bas
+04: 00C23330 
+05: 00C23DF0 
+06: 00C248B0 
+07: 00C25370
+08: 00C25E30 
+09: 00C268F0 : commence en haut, descend, reste en bas : OK
+10: 00C273B0 : triangles en dents de scie, inversé par rapport au 14, on commence en haut. : OK
+11: 00C27E70
+12: 00C28930 
+13: 00C293F0 
+14: 00C29EB0 : triangles en dents de scie, sur 2 octets
+15: 00C2A970 : 
+
+
+
+
+
+----------------
+Tache 5:
+application de l'enveloppe pour la voie A
+application de l'enveloppe pour la voie B
+application de l'enveloppe pour la voie C
+
+routine = 0c064f4
+
+le Sinus-Sid est  une enveloppe.
+
+
+----------------
+Tache 6:
+mixage final
+
+; boucle pour 4*4=16 samples						   
+                           .data:00c065cc 20 18                            move.l	(a0)+,d0				; noise + tone voie A = onde carrée 
+                           .data:00c065ce 22 19                            move.l	(a1)+,d1				; noise + tone voie B = onde carrée
+                           .data:00c065d0 24 1a                            move.l	(a2)+,d2				; noise + tone voie C
+                           .data:00c065d2 c0 9b                            and.l	(a3)+,d0				; buffer_destination_enveloppe_voie A
+                           .data:00c065d4 c2 9c                            and.l	(a4)+,d1				; buffer_destination_enveloppe_voie B
+                           .data:00c065d6 c4 9d                            and.l	(a5)+,d2				; buffer_destination_enveloppe_voie C
+                           .data:00c065d8 d4 80                            add.l	d0,d2
+                           .data:00c065da d4 81                            add.l	d1,d2					; D2 = D0+D1+D2
+                           .data:00c065dc b7 82                            eor.l	d3,d2					; normalisation du résultat : passe en signé
+                           .data:00c065de 2c c2                            move.l	d2,(fp)+
+
+
+
+---------------------------------------------------------------------------------------------------------------
+
+LEDS:
+A:
+T : note
+N : noise
+E : enveloppe
+S : Sid
+D : digidrum 
+
+B & C
+
+D: Sinus-Sid ?
+
+Buzz : Tao buzzer - Sync-Buzzer
+
+
+c04c4e = etat des leds.
+
+structure de 30 octets en liste_de_PSG_quoi_?
+4 pointeurs vers blocks de 30 octets
+structure d'un bloc :
+0 : .long : pointeur buffer samples rempli
+4 : .long	pointeur buffer samples rempli 2 = canal D
+8 : .word	longueur du buffer	
+10 :.word	Audio channel 2 period
+12 : .word	vumetre ou leds
+14 : .long	pointeur sur ?
+
+21 : .byte
+22 : .byte
+23 : .byte
+24 : .byte
+
+28 : .byte : digidrums
+29 : .byte
+
+
+-------------------
+
+$C00000 = debut du dump
+
+C530D6 = data YM7!
+
+
+$DFF016 = 
+
+
+
+8 levels of interrupt. each level have interrupt vector
+level 1 - vector $64 : soft/DskBlk/Tbe
+level 2 - vector $68 : keyboard
+level 3 - vector $6c : Vbl/Copper/Blitter
+level 4 - vector $70 : audio
+level 5 - vector $74 : DskSyn/Rbf
+level 6 - vector $78 : Cia-b 
+
+
+$6c = VBL =   $C039B8
+$78 = Cia B = $C0377A
+$70 = audio = $C0366C
+
+
+
+INTENA = Interrupt Enable $dff09a write / INTENAR = $dff01c Read
+INTREQ = Interrupt Request $dff09c write / INTREQR = $dff01e read 
+
+15 set/clr
+14 Inten = allowed
+13 Exter CIA-B
+12 DskSync
+11 Rbf serial port
+10-7 Audio channels
+6 Blitter ready
+5 Vbl4
+4 Copper
+3 Cia-a (keyboard)
+2 Software
+1 DskBlk Dma Disk
+0 TBE 
+
+
+sur DFF01F : bit 4 = Copper ?
+
+dans la vbl : $C039B8
+$C039CE JSR(A0)		$4E90 ??
+$C039D4 
+
+$DFF09C = 
+
+
+$C100000 = texte
+
+
+
+frequence amiga
+
+1 / (10000 * 279,365 * 10^9) = 357,954 soit 358.
+1 / (22300 * 279,365 * 10^9)
+
+enveloppes:
+00C1C610 00C20830 00C212F0 00C21DB0 00C22870  ...0..........(p
+00C1C620 00C23330 00C23DF0 00C248B0 00C25370  ..30..=...H...Sp
+00C1C630 00C25E30 00C268F0 00C273B0 00C27E70  ..^0..h...s...~p
+00C1C640 00C28930 00C293F0 00C29EB0 00C2A970  ...0...........p
+
+
+#define	AMSTRAD_CLOCK	1000000L
+#define	ATARI_CLOCK		2000000L
+#define	SPECTRUM_CLOCK	1773400L
+#define	MFP_CLOCK		2457600L
+
+
+Ym6Effect:
+
+
+digidrum exemple : 
+CC 84 B4 70 90 94 70 80 80 AC
+CC84B4709094708080AC
+CC84B470 9094 708080AC
+
+CC84B470
+
+inversé : non
+70B484CC
+
+signé :
+CC84B470 => 4C0434F0
+
+
+
+structure :
+structure_emulation_PSG_0x00c0663e
+
+00 : pointeur vers stockage des registres
+.
+.
+14 : channel A, offset de parcours du noise en cours
+22 : C06654 = +
+18 :
+
+22 : increment frequence canal A .w / uniquement la virgule
+26 : increment frequence canal B .w
+30 : increment frequence canal C .w
+33 : registre 7
+34 : FFE00000 ( lié au registre 13 / forme de l'enveloppe )
+38 : .l : frequence enveloppe .l
+42 : pointeur sur la table de l'enveloppe en fonction du registre
+
+46 : flag volume registre 8, bit M=1
+47 : .b : flag noise
+48 : increment frequence noise
+
+120 : table de volume 1 = c2d550 = par défaut, c1c5d0 = table des tables de volume
+124 : table de volume 2 = c2d550 = par défaut, c1c5d0 = table des tables de volume
+128 : table de volume 3 = c2d550 = par défaut, c1c5d0 = table des tables de volume
+
+
+
+
+fabrication du noise de base
+
+                           .data:00c05964 3e 3c 3f ff                      movew #16384-1,%d7
+                           .data:00c05968 70 01                            moveq #1,%d0
+                           .data:00c0596a 74 01                            moveq #1,%d2
+                           .data:00c0596c 43 f9 00 c1 c6 50                lea table_noise_0x00c1c650,%a1
+boucle:						   
+                           .data:00c05972 32 00                            movew %d0,%d1
+                           .data:00c05974 e6 49                            lsrw #3,%d1
+                           .data:00c05976 b1 41                            eorw %d0,%d1
+                           .data:00c05978 c2 42                            andw %d2,%d1
+                           .data:00c0597a d2 41                            addw %d1,%d1
+                           .data:00c0597c 48 41                            swap %d1
+                           .data:00c0597e b3 80                            eorl %d1,%d0
+                           .data:00c05980 e2 88                            lsrl #1,%d0
+                           .data:00c05982 55 c3                            scs %d3
+                           .data:00c05984 12 c3                            moveb %d3,%a1@+
+                           .data:00c05986 51 cf ff ea                      dbf %d7,0x00c05972
+						   
+						   
+D0=1
+D1=1
+D1=0
+D1=1
+D1=1 (and)
+d1=2
+D1=0002 0000
+D0=0002 0001 (eor.l)
+D0=0001 0000  
+D3=FF
+boucle
+
+D0=0001 0000
+D1=0002 0000
+D1=0002 0000
+D1=0002 0000
+D1=0002 0000 (and)
+d1=0002 0000
+D1=0000 0002  swap d1
+D0=0001 0002 (eor.l)
+D0=0000 8001  lsr.l #1,D0
+D3=00
+boucle
+
+
+
+D2  
+D3	
+
+
+
+https://github.com/skeezix/zikzak/blob/master/zik80/audio-gen/ym-file-format.txt
+
+effets :
+
+- Digidrum : lié aux registres 11 12 13
+		remplace ?
+		bit 7 volume canal C pour annoncer une digi-drum madmax.
+
+- SID-Voice : voix D
+
+- Sinus-Sid / proche digidrum, 4 bit sample / Tao		
+
+- Sync-Buzzer											remplace l'enveloppe ?
+
+
+registre 14
+
+registre 15
+
+
+
+YM6 :
+
+http://leonard.oxg.free.fr/ymformat.html
+
+YM2! & YM3!
+	First four bytes is the ASCII identifier "YM2!".
+	First four bytes is again the ASCII identifier "YM3!".
+ 
+	N * 14 * registres
+ 
+	If the current interrupt features no output to register 13 then the byte of the
+	data block for this interrupt and for this register has the value 255 ($FF)
+	
+	interleaved format.
+
+YM3b!
+	First four bytes is the ASCII identifier "YM3b".
+	The following bytes are the data block
+	Last four bytes is a DWORD (32bits integers) data and contains the frame number
+	at wich the loop restart.
+	
+	interleaved format.
+	
+YM4!
+ ----------------------------------------------------------------
+ Offset	Size	Type	    	Comment
+ ----------------------------------------------------------------
+ 0	4	DWORD		ID of YM4 format. ('YM4!')
+ 4	8	String[8]	Check String ('LeOnArD!')
+ 12	4	DWORD		Nb of valid VBL of the file
+ 16	4	DWORD		Song attributes (see below)
+ 20	2	DWORD		Nb of digi-drum sample (can be 0)
+ 24	4	DWORD		Frame loop start (generally 0)
+ 
+  For each digidrum sample:
+
+ {
+ .. ?? DWORD sample size
+ .. ?? BYTES sample data (8bits per sample)
+ }
+ 
+  .. ? NT-String Name of the song
+ .. ? NT-String Name of the author
+ .. ? NT-String Comments (Name of the YM converter !)
+ ----.. ?  All YM2149 registers-----
+ .. 4 DWORD End-File check ('End!')
+ 
+ Song attributes
+         b0:     Set if Interleaved data block.
+        b1:     Set if the digi-drum samples are signed data.
+        b2:     Set if the digidrum is already in ST 4 bits format.
+		b3-b31: Not used yet, MUST BE 0.
+		
+	digi-drum will be noticed DD and Timer-Synth will be
+              noticed TS.
+			  
+        -------------------------------------------------------
+              b7 b6 b5 b4 b3 b2 b1 b0
+         r0:  X  X  X  X  X  X  X  X   Period voice A
+         r1:  -  -  -  -  X  X  X  X   Period voice A
+         r2:  X  X  X  X  X  X  X  X   Period voice B
+         r3:  -  -  -  -  X  X  X  X   Period voice B
+         r4:  X  X  X  X  X  X  X  X   Period voice C
+         r5:  -  -  -  -  X  X  X  X   Period voice C
+         r6:  -  -  -  X  X  X  X  X   Noise period
+         r7:  X  X  X  X  X  X  X  X   Mixer control
+         r8:  -  -  -  X  X  X  X  X   Volume voice A
+         r9:  -  -  -  X  X  X  X  X   Volume voice B
+        r10:  -  -  -  X  X  X  X  X   Volume voice C
+        r11:  X  X  X  X  X  X  X  X   Waveform period
+        r12:  X  X  X  X  X  X  X  X   Waveform period
+        r13:  -  -  -  -  X  X  X  X   Waveform shape
+        -------------------------------------------------------
+        New "virtual" registers to store extra data:
+        -------------------------------------------------------
+        r14:  -  -  -  -  -  -  -  -   Frequency for DD1 or TS1
+        r15:  -  -  -  -  -  -  -  -   Frequency for DD2 or TS2
+		
+
+
+       r1 free bits are used to code TS:
+        r1 bits b5-b4 is a 2bits code wich means:
+
+        00:     No TS.
+        01:     TS running on voice A
+        10:     TS running on voice B
+        11:     TS running on voice C
+
+ r1 bit b6 is only used if there is a TS running. If b6 is set, YM emulator must restart
+ the TIMER to first position (you must be VERY sound-chip specialist to hear the difference).
+ 
+         r3 free bits are used to code a DD start.
+        r3 b5-b4 is a 2bits code wich means:
+
+        00:     No DD
+        01:     DD starts on voice A
+        10:     DD starts on voice B
+        11:     DD starts on voice C
+		
+ If a DD starts on voice V, the volume register corresponding to V (Ex r8 for voice A,
+ r9 for B and r10 for C) contains the sample number in 5 low bits (That mean you have
+ 32 digiDrum max in a song).
+ 
+ DD:
+ 
+ Concerning DD and TS, both effects need to be played at a given frequency. On the ATARI-ST,
+ play routine use the MFP-TIMER chip. That is, any frequency can be coded on 11bits:
+
+ 8bits for timer count, and 3bits for timer predivisor. The MFP runs at 2457600 Hz and has
+ a preset of predivisor.
+
+
+        000:    Timer stop.
+        001:    Prediv by 4
+        010:    Prediv by 10
+        011:    Prediv by 16
+        100:    Prediv by 50
+        101:    Prediv by 64
+        110:    Prediv by 100
+        111:    Prediv by 200
+
+        The 8 bits timer count value is named TC and 3bits prediv value
+        is named TP.
+
+        Some ex to endserstand how it works:
+
+        TP      TC      Frequency (Hz)
+        1       28      (2457600/4)/28   = 21942 Hz
+        4       150     (2457600/50)/150 = 327 Hz
+
+
+ Encode:
+        TP for TS is stored in the 3 free bits of r6 (b7-b5)
+        TP for DD is stored in the 3 free bits of r8 (b7-b5)
+        TC for TS is stored in the 8 bits of r14
+        TC for DD is stored in the 8 bits of r15
+
+        4bits volume value (vmax) for TS is stored in the 4 free bits of r5 (b7-b4)
+		
+
+ 
+ 
+
+
+
+FF00 FF00 FF00 FF00 
+FF00 FF00 FF00 FF00
+00FF FF00 00FF FF00 
+00FF FF00 00FF 00FF
+FFFF 00FF FFFF 00FF 
+FFFF 00FF 0000 00FF
+FFFF FF00 0000 00FF 
+FFFF 00FF FF00 00FF
+0000 FFFF FF00 00FF 
+FFFF FFFF 00FF 00FF
+0000 FFFF 00FF FF00 FF00 0000 FFFF 00FF
+0000 0000 0000 00FF 0000 FFFF FFFF 00FF
+FFFF FFFF FF00 FF00 FFFF 00FF FFFF FF00
+FF00 FFFF FF00 0000 0000 00FF 0000 00FF
+FFFF 0000 FFFF FFFF FF00 FF00 00FF FF00
+00FF 0000 FF00 FFFF FF00 FF00 0000 FF00
+FF00 FF00 0000 FFFF FF00 FFFF 00FF FF00
+00FF 0000 FFFF 0000 0000 0000 0000 FF00
+FF00 FFFF FF00 0000 0000 0000 FF00 00FF
+FFFF 0000 FFFF FFFF FFFF 00FF 00FF FF00
+00FF 0000 FF00 FF00 0000 FFFF FFFF 00FF
+00FF 00FF FF00 FFFF 0000 FF00 0000 FFFF
+0000 0000 0000 00FF 00FF 0000 FFFF FF00
+0000 0000 00FF 0000 FF00 FFFF 0000 FFFF
+FFFF FF00 FF00 FF00 0000 00FF 0000 FF00
+
+
+-------------------------------------
+enveloppes
+
+00C0AF48 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0AF58 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AF68 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AF78 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0AF88 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0AF98 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AFA8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AFB8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0AFC8 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0AFD8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AFE8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0AFF8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B008 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B018 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B028 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B038 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B048 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B058 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B068 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B078 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B088 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B098 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B0A8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B0B8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B0C8 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B0D8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B0E8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B0F8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B108 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B118 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B128 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B138 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B148 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B158 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B168 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B178 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+
+00C0B188 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B198 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B1A8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B1B8 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+00C0B1C8 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B1D8 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B1E8 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B1F8 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+
+00C0B208 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B218 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+00C0B228 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+00C0B238 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+
+00C0B248 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B258 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B268 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B278 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+
+00C0B288 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B298 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+00C0B2A8 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+00C0B2B8 5555 5555 5555 5555 5555 5555 5555 5555  UUUUUUUUUUUUUUUU
+
+00C0B2C8 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B2D8 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+00C0B2E8 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B2F8 5537 2218 100B 0805 0402 0201 0000 0000  U7".............
+
+00C0B308 0000 0000 0102 0204 0508 0B10 1822 3755  ............."7U
+00C0B318 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B328 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00C0B338 0000 0000 0000 0000 0000 0000 0000 0000  ................
+
+----------------------------------------------------------------------
+digidrum
+remplace le mixage de l'enveloppe ?
+mixage enveloppe = c05eba
+D0= increment suivant la fréquence : 16 bits entier, 16 bits virgule
+D1= offset actuel du parcours du digidrum
+A0=début sample
+
+test du bouclage à la sortie donc samples rallongés ?
+
+- tables des pointeurs vers digidrums = c03486
+- bouclage :
+	debut=44528
+	longueur = 17b => 446a3
+	prochain sample = 44d9c = + 6F9 / 1785 ( arrondi)
+	debut=44d9c
+	longueur=5f8
+	prochain=45a8c = + 1784
+
+rempli de zéros
+	
+	
+
+- increment en fonction de frequence de replay du digidrum. predivisor sur 3 bits = TP +  diviseur 8 bits = TC
+
+
+wings of death 1
+coso sur amiga :
+17 0E BB 03 03 00 07 EE 00 0C 00 00 00 00 00 00
+
+4 samples
+tailles:
+$277=631
+
+277+26 = $29D
+2D7+29D+4 = $578
+01E0 + 4 + 578 = $75C
+01EA + 4 +75C = $94A
+
+
+17 EE EE EE EE 
+
+EE = 1110 1110
+
+---------------
+enveloope ON :
+
+flag enveloppe
+C06676
+C06686
+C06696 = voie C 
+
+
+increments :
+A = C06678.l
+B = C06688.l
+C = C06698.l
+
+
+C09349 = table des increments MFP ?
+utilisée en - car si prediv = 000 => timer stop => donc + 256*4 => C09348-400=C08F48
+
+taille = 8192 - 1024
+
+chargée toute faite
+
+premiere valeur = 	001B DD2C	= 27,86395263      /4 / 1
+					000D EE96	= 13,93197631		/ 4 /2
+
+parametres : 22050 = freq Amiga
+freq mfp = 2457600
+
+2457600 / 4 = 614 400
+
+256 eme valeur pour changer de prediv : 
+*4 octets = 1024
+=> C09746
+
+prediv = 10
+000B 2545 = 11,14558410 => freq mfp / freq Amiga / prediv = 10 / 1
+0005 92A2 = 11,14558410 => freq mfp / freq Amiga / prediv = 10 / 2
+
+
+prediviseurs : 8
+
+
+
+
+w 1 C06696 2 W
+
+
+si pas d'enveloppe :
+
+pointeur vers l'enveloppe d'une voie :
+
+par défaut : PSG_pointeur_buffer_enveloppe_calculee_pour_cette_VBL
+enveloppe PSG calculée 
+
+si bit 4 du registre de volume de la voie = 0 => on prend table de volume du channel 
+
+---
+mixage didgidrum = c05eba
+D0 = A6+56+2 = 58 = $00C06678 = incrément fréquence digidrum
+D1 = A6+56+6 = 62 =  $00C0667C = offset de parcours de l'enveloppe pour la voie 
+A0 = A6+56+10 = 66 = $00C06680 = pointeur début du sample
+
+d0=
+d1=position actuelle dans le sample entier & virgule
+
+appellé aussi de c05e1c = prépatation mixage enveloppe
+
+------------------------------------------------------------------------
+increment frequence = 46a0 ( $C06698 )
+offset = 0
+pointeur debut sample = $460B6 
+3722 3722 2222 2222 2237 1855 0022 1810
+1822 2222 2218 2200 1018 2237 5555 5555
+
+
+sample sur ARC:
+1805 1004 0808 0405 050b 0255 0005 0201
+
+
+frequence mfp = $165
+increment cohérent
+table de conversion 4bits => volumes YM OK
+
+
+sample originel = 3FB74
+0E0D 0E0D 0D0D 0D0D 0D0E 0C0F 000D 0C0B
+
+
+version 8 bits du sample :
+CC84 B470 9094 7080 
+
+version 4 bits du sample sur ARC:
+
+0C08 0B07 0909  
+
+
+
+correspondance 4 bits calculés et 4 bits du Coso:
+
+table WINUAE
+madmax1
+44528 / 2D8				sample 2 ARC
+44EF8 / 1EB				sample 4 ARC
+457DC / 1E1				sample 3 ARC
+460B6 / 278				sample 1 ARC		sample joué en 1er
+
+
+---------------
+
+1ER mixage 1er musique wings of death
+
+A0=C2D010 =  					R0 = idem ARC/Amiga
+0000000000000000000000000000000000000000000000000000000000
+A1 = C2D1D0 =					R1 = semble identique
+0000 0000 0000 0000 FFFF FFFF FF00 FF00
+FFFF 0000 0000 0000 00FF FFFF 00FF FFFF
+A3 = C2D390						R2  ----------------------- 00 a la place de FF !
+FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF
+FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF
+FFFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF...
+
+enveloppe volume :
+A3 = C2B410 = 					identique
+000000000000000000000...
+A4 = C2C910 = 					identique
+1818 1818 1818 1818 1818 1818 1818 1818
+1818 1818 1818 1818 1818 1818 1818 1818...
+A5 = C2B410 = 
+000000000000000000000...
+
+après tests :
+A5 = C2DA90
+3737 3722 2222 2237 3737 2222 2222 2222
+2222 2222 2222 2222 2222 2222 2222 2222
+3737 3737 1818 1855 5555 5500 0000 0022
+
+
+
+R2  ----------------------- 00 a la place de FF !
+register 7 = $CA = 1100 1010						tone C = 0 & Noise C= 0
+sur amiga register 7 = 2E = 0010 1110				tone C = 1 & Noise C= 1
+
+sur amiga reg7 = $EE = 1110 1110
+
+C0663E = registres
+
+pour decider quelle routine mixage noise+tone = structure registre + 32 = voie C = $C0665E
+modifé en c05b24
+=$2E = 0010 1110 : tone C = 1 & Noise C= 1
+
+
+registres ARC
+17 0E BB 33 00 00 07 CA 20 0C 00 00 00 0A 00 65
+--------------
+
+loading - (6) sur Amiga
+1er sample fait = please wait
+
+bkp = c06522
+increment = d0 = 46A0
+offset = d1 = 0000 
+pointeur = a0 = $46F8C
+longeur = $1088
+numéro de sample = 0
+fin du sample = 46F8C + 1088 = 48014
+
+il a avancé de 007B 0AC0, doit etre identique sur ARC
+--------------------------------------
+analyse frequences MFP
+offset = 007B 0AC0, 00F6 1580
+increment = $0000 46A0
+
+frequence MFP = 165
+frequence Amiga = 22300 / 446 octets par VBL
+$1B*16 = $1B0 + 14 = 446
+
+2457600  / 4 / $65  = 17C3 = 6083 hz frequence de replay
+frequence Amiga OK
+
+calcul pour ARC:
+=4AC0
+416*4AC0 / 65536 = 7 960 576 => $0079 7800
+
+.... 
+increment théorique ARC = 0000 4BB7
+----------------
+leaving terramis
+
+sur amiga : leaving terramis (1)
+
+sur ARC : Leaving Teramis 11 - title.ym
+
+T E
+T E
+rien
+
+
+
+premier mixage Amiga:
+
+voie A:
+A0=c2d010
+plein de 0, plein de FF
+A1=c2d1d0
+plein de 0, plein de FF
+A2=C2d390
+plein de 0, plein de FF
+
+enveloppes en scie ? = 1010 !
+voie A : il y a une env
+A3=C2D550 
+5555 5555 5555 5555 5555 5555 5555 5555
+5555 5555 5537 3737 3737 3737 3737 3737
+3737 3737 3737 3737 3737 2222 2222 2222
+
+voie B:
+A4=meme enveloppe que A
+
+voie C:
+A5=volume à zéro
+
+registres = c0663e
+DE0E 6F07 170E 01F8 1010 0078 000A 0000
+
+sur ARC:
+DE0E 6F07 170E 00F8 1010 0078 000A 0000
+
+onde carrée OK
+env mal générée 
+
+frequence A = reg 0+reg 1 = identiques
+frequence B = reg 2 + reg 3 = identiques
+frequence C = reg 4+5 = identiques
+reg 6 = 01 ou 00 ? = freq noise
+
+reg 7 = F8 = btst bit 7 ???
+F8 = 1111 1000  == >   tone A B et C / pas de noise
+
+reg 8 : volume A = 10 = 0b0001 0000 = enveloppe
+reg 9 = volume B = 10 = 0b0001 0000 = enveloppe
+reg 10 : volume C = 0
+reg 11+12 = frequency env = 0078 
+reg 13 : shape = 0A = 0b1010 = dents de scie.
+14/15 = 0
+
+
+--
+choix forme enveloppe :
+c05bd8 49 f9 00 c1 c6 10                lea 0x00c1c610,%a4
+
+ARC:
+c'est la bonne forme d'enveloppe
+
+table des enveloppes:
+00C1C610 00C2 0830 00C2 12F0 00C2 1DB0 00C2 2870  ...0..........(p
+00C1C620 00C2 3330 00C2 3DF0 00C2 48B0 00C2 5370  ..30..=...H...Sp
+00C1C630 00C2 5E30 00C2 68F0 00C2 73B0 00C2 7E70  ..^0..h...s...~p
+00C1C640 00C2 8930 00C2 93F0 00C2 9EB0 00C2 A970  ...0...........p
+
+
+C273B0 = \/\/
+-------------------------------------------
+
+music avec uniquement :
+
+S sur les voies : madmax - virtual escape  part
+		   furax - virtual escape main
+
+
+<---------------
+routine = init c055ba
+replay sid = c061b6
+do=increment : entier virgule
+d1=offset actuel entier virgule
+A0=source du son / variations de volume / sample
+A1 = dest
+
+
+table sur les pointeurs de sample sid : C35804
+crée en c053fe
+
+
+00C35804 : 00C3584C 00C35872 00C35898 00C358D0  ..XL..Xr..X...X.
+00C35814 : 00C35908 00C35940 00C35978 00C359B0  ..Y...Y@..Yx..Y.
+00C35824 : 00C359E8 00C35A20 00C35A58 00C35A90  ..Y...Z ..ZX..Z.
+00C35834 : 00C35AC8 00C35AE4 00C35B1C 00C35B54  ..Z...Z...[...[T
+00C35844 : 00C35C0E 00C35C34
+
+18 pointeurs
+C3584C longueur = 38 octets
+00C3584C 2200 2200 2200 2200 2200 2200 2200 2200  ".".".".".".".".
+00C3585C 2200 2200 2200 2200 2200 2200 2200 2200  ".".".".".".".".
+00C3586C 2200 2200 2200 
+C35872 longueur = 38 octets
+00C35872 3700 3700 3700 3700 3700 3700 3700 3700  7.7.7.7.7.7.7.7.
+00C35882 3700 3700 3700 3700 3700 3700 3700 3700  7.7.7.7.7.7.7.7.
+00C35892 3700 3700 3700
+
+
+
+
+---
+music 38
+se charge en C4ADCC
+YM7!
+LeOnArD!
+
+                             0002 0002 0000 33FE  LeOnArD!......3.						0000 33FE = nb frames 
+00C4ADE0 0037 0017 0000 0026 															0037 = 55 HZ / 0017 = ? / $00000026 = nb samples a creer ?
+00C4ADE8 0002 0044 0002 000D  .7.....&...D....											4 octets par entrée
+00C4ADF0 0002 0030 0002 0021 0002 000D 0002 000C  ...0...!........
+00C4AE00 0002 0086 0003 0015 0006 001F 0002 0008  ................
+00C4AE10 0002 0008 0003 000B 0003 000B 0003 000B  ................
+00C4AE20 0003 0006 0003 000B 0003 0006 0003 000B  ................
+00C4AE30 0006 0003 0006 0004 0006 0003 0002 000B  ................
+00C4AE40 0006 0005 0002 0008 0002 0008 0006 001F  ................
+00C4AE50 0006 0006 0006 0004 0006 0003 0006 0003  ................
+00C4AE60 0006 0003 0006 0002 0002 0003 0002 0003  ................
+00C4AE70 0002 0008 0002 0007 0002 0008 0002 0008  ................ 4*9=36+2=38=$26
+
+00C4AE80 0900 0B00 0A00 0800 0700 0600 0C00 0C0C  ................
+00C4AE90 000A 0A0A 0A0A 0005 0003 0008 0800 0707  ................
+00C4AEA0 000B 000B 0606 000A 0A00 0505 0009 0900  ................
+00C4AEB0 0C0C 0C0C 0C00 0B00 0B0B 0B0B 0E0E 000E  ................
+00C4AEC0 0E0E 0E0E 0D0D 0D0D 0D00 0E00 0D0D 0909  ................
+00C4AED0 0900 0909 0808 0808 0008 0707 0707 0700  ................
+00C4AEE0 0606 0606 0600 0505 0505 0500 0404 0404  ................
+00C4AEF0 0004 0300 0303 0303 0A0A 0B0B 0C0C 0D00  ................
+00C4AF00 0400 0200 090B 0A08 0706 0C0C 0A05 0308  ................
+00C4AF10 070B 060A 0509 0C0B 0E0E 0D0E 0D09 0807  ................
+00C4AF20 0605 0403 0A0B 0C0D 0402 0000 0007 1294  ................
+00C4AF30 0008 186E 0004 17CA 0004 186E 0004 186E  ...n.......n...n
+00C4AF40 0004 186E 0004 1294 0008 E9E4 E3E3 07C9  ...n............
+00C4AF50 C0C0 EBE0 EBE2 F3F7 FAD0 C8C0 C0C0 C0C0  ................
+00C4AF60 C0C0 D1EB C0C0 D1EB C0C0 C0C0 C4C0 F2F0  ................
+00C4AF70 FAF0 F5C9 C0C0 0004 06EC 1703 E112 15E6  ................
+
+
+BKP :
+f C06508 : arreter a la generation de l'enveloppe SID
+f c065ca : mixage final - voir ce que contiennent les sources et les enveloppes : A0 A1 A2 / A3 A4 A5
+
+---------------------------
+je suis une onde carée a la frequence SID
+en fonction de la fréquence, un registre = 00 ou volume max SID
+
+
+
+
+--------------------------------------------------------------------
+D : 505 robost / madmax buzzer pendant 7 secondes
+
+Buzz :
+
+

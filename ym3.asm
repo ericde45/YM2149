@@ -8,8 +8,8 @@
 ; OK - gérer les blocs lors de la lecture des registres + création table des blocs : pointeur vers adresse du bloc + ecart entre registres pour ce bloc   / + numéro bloc en cours + nb de blocs
 ; OK gérer digidrums : init
 ; OK gérer digidrums : replay
-; - gérer SID : init
-; - gérer SID : replay
+; OK gérer SID : init
+; OK gérer SID : replay
 ; - gérer Sync buzzer : init
 ; - gérer Sync buzzer : replay
 ; - gérer Sinus SID : init
@@ -18,7 +18,7 @@
 
 .equ		taille_totale_BSS,	256+(16*4)+(nb_octets_par_vbl*16)+16384+nb_octets_par_vbl+(4*16)+(16*86*32)+nb_octets_par_vbl+nb_octets_par_vbl+nb_octets_par_vbl+nb_octets_par_vbl
 
-.equ		DEBUG,				0								; 1=debug, pas de RM, Risc OS ON, buffers DMAs plus loin pour laisser la place pour Qdebug
+.equ		DEBUG,				1								; 1=debug, pas de RM, Risc OS ON, buffers DMAs plus loin pour laisser la place pour Qdbug
 .equ		TEST_SAMPLE,		1
 .equ		longueur_du_sample,				75851
 
@@ -57,6 +57,8 @@
 
 .equ	YM2149_shift_onde_carre_SID, 15
 .equ	YM2149_shift_onde_carre_Tone, 16
+.equ	YM2149_shift_Buzzer, 16
+
 
 ; DEBUG YM
 .equ	YM_decalage_debut_YM_pour_debug, 0					;50*42
@@ -86,15 +88,15 @@ main:
 
 	bl		allocation_memoire_buffers
 	
-	ldr		R0,PSG_pointeur_fichier_YM7_haut
-	bl		init_fichier_YM7
-	
 ; init du YM2149
 	bl		PSG_creer_tables_volumes
 	bl		PSG_creer_Noise_de_base
 	bl		PSG_etendre_enveloppes
 
 	bl		create_table_lin2log
+
+	ldr		R0,PSG_pointeur_fichier_YM7_haut
+	bl		init_fichier_YM7
 
 	.ifeq	TEST_SAMPLE
 	bl		conversion_du_sample_en_mu_law
@@ -245,11 +247,15 @@ main:
 ;------------------------------------------------ boucle centrale
 
 boucle:
+	bl		affiche_ligne_infos
+
+	.ifeq	1
 	mov		R0,#5750
 boucle_attente:
 	mov		R0,R0
 	subs	R0,R0,#1
 	bgt		boucle_attente
+	.endif
 
 
 	SWI		22
@@ -308,7 +314,7 @@ boucle_attente:
 	mov   r0,r0		
 
 ; --------------
-	bl		affiche_ligne_infos
+
 
 
 	
@@ -790,13 +796,15 @@ affiche_ligne_infos:
 	cmp		R0,#0
 	movne	R0,#84					; T
 	moveq	R0,#32
-	adr		R1,PSG_aff_infos_Tone_B
+	;adr		R1,PSG_aff_infos_Tone_B
+	add		R1,R1,#PSG_aff_infos_Tone_B-PSG_aff_infos_SID_A
 	strb	R0,[R1]
 	ldr		R0,[R12,#PSG_flag_Tone_voie_C-PSG_structure_PSG]
 	cmp		R0,#0
 	movne	R0,#84					; T
 	moveq	R0,#32
-	adr		R1,PSG_aff_infos_Tone_C
+	;adr		R1,PSG_aff_infos_Tone_C
+	add		R1,R1,#PSG_aff_infos_Tone_C-PSG_aff_infos_Tone_B
 	strb	R0,[R1]
 
 	ldr		R0,[R12,#PSG_flag_Noise_voie_B-PSG_structure_PSG]
@@ -853,6 +861,13 @@ affiche_ligne_infos:
 	adr		R1,PSG_aff_infos_Digidrums_C
 	strb	R0,[R1]
 
+	ldr		R0,[R12,#PSG_flag_buzzer-PSG_structure_PSG]
+	cmp		R0,#0
+	movne	R0,#66
+	moveq	R0,#32
+	adr		R1,PSG_aff_infos_Buzzer
+	strb	R0,[R1]
+
 	
 
 ; affichage texte infos:
@@ -892,8 +907,11 @@ PSG_aff_infos_Env_C:
 PSG_aff_infos_SID_C:
 	.byte	"S "
 PSG_aff_infos_Digidrums_C:
-	.byte	"D"
-	
+	.byte	"D   -  "
+PSG_aff_infos_Buzzer:
+	.byte	"B "
+PSG_aff_infos_Sinus:
+	.byte	"S "
 	
 	.byte	13,0
 	.p2align 2
@@ -1112,7 +1130,7 @@ init_fichier_YM7:
 	str		R14,save_R14_init_YM7
 
 ; R0=adresse fichier YM7
-	ldr		R12,PSG_pointeur_structure_PSG
+	ldr		R12,PSG_pointeur_structure_PSG_haut
 
 	SWI		0x01
 	.byte	"--YM7--",10,13,0
@@ -1217,6 +1235,7 @@ init_fichier_ym7_pas_d_effet_sync_buzzer:
 init_fichier_ym7_pas_d_effet_sinus_sid_D:
 
 	str		R8,[R12,#PSG_nb_registres_par_frame-PSG_structure_PSG]
+
 
 ; init des DG
 ; nombre de digidrums
@@ -1382,11 +1401,11 @@ init_fichier_YM_boucle_copie_1_DG_datas:
 ; remet le pointeur sur R0 juste après les DG
 	mov		R0,R1
 
-; on arrondit
+; on arrondit R0
 	add		R0,R0,#1
 	and		R0,R0,#0xFFFFFFFE				; dernier bit = 0 => arrondi au multiple de 2 supÃ©rieur
 
-	
+; ------------------------------------- init SID ---------------------------------------	
 init_fichier_ym7_pas_de_digidrums:
 
 ; nombre de samples SID
@@ -1399,8 +1418,160 @@ init_fichier_ym7_pas_de_digidrums:
 	cmp		R1,#0
 	beq		init_fichier_ym7_pas_de_SID
 
-	swi BKP
+; R1 = nb de Sid
+
+	mov		R9,R0				; R9=pointeur debut tailles SID
+	mov		R4,#0				; R4 = taille totale des SID
+	mov		R6,R1				; R1 & R6=nb SID
+
+; ------- calcul sommes des tailles des SID
+init_fichier_YM_boucle_add_tailles_SID:
+; 1 word = taille 
+	ldrb	R3,[R0],#1
+	mov		R3,R3,lsl #8
+	ldrb	R2,[R0],#1
+	orr		R2,R3,R2			; R2=taille du SID
+; 1 word = multiplicateur
+	ldrb	R7,[R0],#1
+	mov		R7,R7,lsl #8
+	ldrb	R3,[R0],#1
+	orr		R7,R3,R7			; R7=multiplicateur
+
+	mul		R3,R2,R7			; R3 = R2*R7 = taille * multiplicateur
+
+	; R3 =  taille du SID
 	
+	
+; arrondi
+	add		R3,R3,#1
+	and		R3,R3,#0xFFFFFFFE				; dernier bit = 0 => arrondi au multiple de 2 supÃ©rieur
+
+	add		R4,R4,R3						; taille rÃ©elle
+	
+	subs	R6,R6,#1
+	bgt		init_fichier_YM_boucle_add_tailles_SID
+; R4=taille totale des SID
+	str		R4,[R12,#PSG_taille_totale_des_SID-PSG_structure_PSG]
+
+; ------- allocation mémoire pour les SID
+; allouer PSG_taille_totale_des_SID octets en + de pointeur_FIN_DATA_actuel
+
+; recuperer l'allocation ram actuelle
+	mov		R0,#-1				; New size of current slot
+	mov		R1,#-1				;  	New size of next slot
+	SWI		Wimp_SlotSize			; Wimp_SlotSize 
+
+	add		R0,R0,R4				; current slot size + valeur_taille_memoire SID = New size of current slot
+	mov		R1,#-1
+	SWI 	Wimp_SlotSize			; Wimp_SlotSize 
+
+; ------- clean la mÃ©moire allouee
+	ldr		R5,[R12,#pointeur_FIN_DATA_actuel-PSG_structure_PSG]
+	str		R5,[R12,#PSG_adresse_debut_SID-PSG_structure_PSG]
+	
+	add		R6,R4,R5				; R6 = pointeur fin de ram + PSG_taille_totale_des_SID
+
+; on arrondi Ã  multiple de 4
+	add		R6,R6,#3
+	and		R6,R6,#0xFFFFFFFC
+	str		R6,[R12,#pointeur_FIN_DATA_actuel-PSG_structure_PSG]
+	
+	mov		R2,R4					; taille des SID
+	mov		R6,#0
+init_fichier_YM_boucle_clean_memoire_SID:
+	strb	R6,[R5],#1
+	subs	R2,R2,#1
+	bgt		init_fichier_YM_boucle_clean_memoire_SID
+
+; -------  remplir la table des pointeurs de SID : 
+; R9=pointeur debut SID : PSG_table_pointeurs_SID
+
+	mov		R1,R9													; source des SID
+	ldr		R2,[R12,#PSG_adresse_debut_SID-PSG_structure_PSG]							; destination des SID
+	ldr		R3,[R12,#PSG_pointeur_table_pointeurs_SID-PSG_structure_PSG]				; table de pointeurs adresse SID + longueur
+	ldr		R4,[R12,#PSG_pointeur_tables_de_16_volumes_DG-PSG_structure_PSG]							; table des volumes 4 bits
+	
+	
+	ldr		R7,[R12,#PSG_nb_SID-PSG_structure_PSG]
+init_fichier_YM_boucle_copie_1_SID:
+	ldrb	R5,[R1],#1
+	mov		R5,R5,lsl #8
+	ldrb	R6,[R1],#1
+	orr		R6,R5,R6						; R6= taille
+	
+	ldrb	R8,[R1],#1
+	mov		R8,R8,lsl #8
+	ldrb	R5,[R1],#1
+	orr		R8,R5,R8						; R8 = multiplier
+
+	mul		R5,R8,R6				; R5 = taille * multiplicateur
+	
+	; R5 =  taille du digidrum
+
+	str		R2,[R3],#4						; pointeur debut digidrum destination
+	str		R6,[R3],#4						; taille digidrum non multiplié
+	
+; arrondi
+	add		R5,R5,#1
+	and		R5,R5,#0xFFFFFFFE				; dernier bit = 0 => arrondi au multiple de 2 supÃ©rieur
+	
+	add		R2,R2,R5						; pointeur DG suivant
+
+	subs	R7,R7,#1
+	bgt		init_fichier_YM_boucle_copie_1_SID	
+
+; -------   copier les SID
+; convertir avec la table de volume
+
+	ldr		R7,[R12,#PSG_nb_SID-PSG_structure_PSG]
+	ldr		R3,[R12,#PSG_pointeur_table_pointeurs_SID-PSG_structure_PSG]				; table de pointeurs adresse SID + longueur	
+; R9=taille.w, multiplier.w * N
+; R1=pointeur sur les données sample du 1er SID
+; R4=PSG_pointeur_tables_de_16_volumes_DG
+init_fichier_YM_boucle_copie_1_SID_header:
+	ldrb	R5,[R9],#1
+	mov		R5,R5,lsl #8
+	ldrb	R6,[R9],#1
+	orr		R6,R5,R6						; R6= taille
+	
+	ldrb	R8,[R9],#1
+	mov		R8,R8,lsl #8
+	ldrb	R5,[R9],#1
+	orr		R8,R5,R8						; R8 = multiplier
+
+	ldr		R2,[R3],#4						; pointeur dest = memoire allouee pour SID
+	add		R3,R3,#4						; saute la taille totale du sample
+	
+init_fichier_YM_boucle_copie_1_SID_multiplier:
+	mov		R5,R6							; taille du Sid
+	mov		R10,R1							; source du sample
+	
+init_fichier_YM_boucle_copie_1_SID_taille:
+
+	ldrb	R0,[R10],#1						; octet du sample du SID
+	ldrb	R0,[R4,R0]						; converti en volume YM
+	strb	R0,[R2],#1						; ecrit dans la nouvelle destination
+
+	subs	R5,R5,#1
+	bgt		init_fichier_YM_boucle_copie_1_SID_taille
+
+	subs	R8,R8,#1						; diminue le multiplier
+	bgt		init_fichier_YM_boucle_copie_1_SID_multiplier
+
+	mov		R1,R10							; avance au sample source suivant
+	subs	R7,R7,#1
+	bgt		init_fichier_YM_boucle_copie_1_SID_header
+
+	mov		R0,R10
+; saute octets de vmax a la suite des SID
+	ldr		R7,[R12,#PSG_nb_SID-PSG_structure_PSG]
+	add		R0,R0,R7
+
+; on arrondit R0 multiple de 2
+	add		R0,R0,#1
+	and		R0,R0,#0xFFFFFFFE				; dernier bit = 0 => arrondi au multiple de 2 supÃ©rieur
+	
+; +++++++++++++++++++++ test init Buzzer
 init_fichier_ym7_pas_de_SID:
 
 ; nombre de samples Buzzer
@@ -1413,8 +1584,115 @@ init_fichier_ym7_pas_de_SID:
 	cmp		R1,#0
 	beq		init_fichier_ym7_pas_de_buzzer
 
-	swi BKP
+; tableau ou stocker les pointeurs vers liste d'env pour buzzer
+; R0 pointe sur les tailles des enveloppes-buzzer, suivi par nb de repetitions  de chaque enveloppe-buzzer , suivi par numero des enveloppes constituant les enveloppes-buzzer
+; R1 = nb d'enveloppes-buzzer
+
+	mov		R9,R0		; R9 = stocke pointeur param env Buzzer
+	mov		R10,R1		; R10 = stocke nb env buzzer
+	str		R1,[R12,#PSG_nb_env_Buzzer-PSG_structure_PSG]
+
+
+	str		R0,[R12,#PSG_pointeur_datas_configuration_buzzer_fichier_YM7-PSG_structure_PSG]
+	mov		R2,R0				; R2 = tailles de l'envloppe-buzzer
+	add		R0,R0,R1			; saute les tailles des env-buzzer
+	mov		R11,R0				; R11 = repetition de l'enveloppe-buzzer
+	add		R0,R0,R1			; R0 = numéro des enveloppes constituants l'enveloppe-buzzer
+	str		R0,[R12,#PSG_pointeur_numeros_env_buzzer_fichier_YM7-PSG_structure_PSG]
+
+	mov		R7,R1				; R7 = nb env buzzers
+	mov		R8,#0
+
+init_fichier_ym7_buzzer_boucle_calcul_taille_totale:	
+	ldrb	R3,[R2],#1
+	ldrb	R4,[R11],#1
+	add		R4,R4,#10
+	mul		R5,R4,R3			; R5 = taille * repetition
+	mov		R5,R5,lsl #2		; 4 = table de .long
 	
+	add		R8,R8,R5			; R8 = taille totale
+	
+	subs	R7,R7,#1
+	bgt		init_fichier_ym7_buzzer_boucle_calcul_taille_totale
+
+; ------- allocation mémoire pour les env Buzzer
+
+; recuperer l'allocation ram actuelle
+	mov		R0,#-1				; New size of current slot
+	mov		R1,#-1				;  	New size of next slot
+	SWI		Wimp_SlotSize			; Wimp_SlotSize 
+
+	add		R0,R0,R8				; current slot size + valeur_taille_memoire env buzzer = New size of current slot
+	mov		R1,#-1
+	SWI 	Wimp_SlotSize			; Wimp_SlotSize 
+
+; ------- stocke les pointeurs
+	ldr		R5,[R12,#pointeur_FIN_DATA_actuel-PSG_structure_PSG]
+	str		R5,[R12,#PSG_adresse_debut_table_env_Buzzer-PSG_structure_PSG]
+	
+	add		R6,R8,R5				; R6 = pointeur fin de ram + PSG_taille_totale_des_env buzzer
+
+; on arrondi a multiple de 4
+	add		R6,R6,#3
+	and		R6,R6,#0xFFFFFFFC
+	
+	str		R6,[R12,#pointeur_FIN_DATA_actuel-PSG_structure_PSG]
+
+
+; ------- crée les tables de pointeurs d'env pour Buzzer
+; R0=pointeur numero env
+; R1=table des pointeurs sur env buzzer
+; R2=pointeur sur les tailles des enveloppes-buzzer
+; R3=tmp
+; R4=espace memoire de stockage des listes de pointeurs pour env buzzer
+; R5=liste des env depliees
+; R6=taille de l'env buzzer en cours
+; R7=nb env buzzer
+; R11=pointeur liste de repetition des tailles des env buzzer
+
+	ldr		R5,[R12,#PSG_pointeur_sur_table_liste_des_enveloppes_depliees-PSG_structure_PSG]							; table des pointeurs des enveloppes
+	
+	ldr		R1,[R12,#PSG_pointeur_vers_table_pointeurs_env_Buzzer-PSG_structure_PSG]
+	
+	ldr		R0,[R12,#PSG_pointeur_numeros_env_buzzer_fichier_YM7-PSG_structure_PSG]					; R0 = numéro des enveloppes constituants l'enveloppe-buzzer
+	ldr		R4,[R12,#PSG_adresse_debut_table_env_Buzzer-PSG_structure_PSG]
+	ldr		R7,[R12,#PSG_nb_env_Buzzer-PSG_structure_PSG]			; R7 = nb env buzzer à creer
+	sub		R11,R0,R7							; R11 = repetition de l'enveloppe-buzzer
+	sub		R2,R11,R7							; R2 = taille de l'enveloppe-buzzer
+
+
+init_fichier_ym7_buzzer_boucle_1_env:
+	ldrb	R6,[R2],#1							; taille de l'env buzzer en cours ( 01 01 04 )
+	mov		R9,R6
+	str		R4,[R1],#4							; remplit table des pointeurs sur les liste de pointeurs pour env buzzer !
+	mov		R8,R4
+
+init_fichier_ym7_buzzer_boucle_copie_pointeur_env:
+	ldrb	R3,[R0],#1							; numéro d'enveloppe
+	ldr		R3,[R5,R3,lsl #2]					; pointeur sur l'enveloppe
+	str		R3,[R4],#4							; stocke le resultat
+	
+	subs	R6,R6,#1
+	bgt		init_fichier_ym7_buzzer_boucle_copie_pointeur_env
+
+; copier repetition-1 de R8 vers R4
+	ldrb	R6,[R11],#1							; repetition ( 12 0A 08 )
+	sub		R6,R6,#1							; -1
+	add		R6,R6,#10							; repetition + 10
+	mul		R10,R6,R9							; R7 = (repetition -1 +10 ) * taille de l'env
+
+init_fichier_ym7_buzzer_boucle_copie_pointeur_env_suite:
+	ldr		R3,[R8],#4
+	str		R3,[R4],#4
+	subs	R10,R10,#1
+	bgt		init_fichier_ym7_buzzer_boucle_copie_pointeur_env_suite
+
+; on passe a l'env buzzer suivante
+
+	subs	R7,R7,#1
+	bgt		init_fichier_ym7_buzzer_boucle_1_env
+
+; +++++++++++++++++++++ test init Sinus SID	
 init_fichier_ym7_pas_de_buzzer:
 
 ; nombre de samples sinus SID
@@ -1702,7 +1980,8 @@ lz4_depack_over:
 ;
 ; --------------------------------------------------------
 
-PSG_mask_0x7FF:		.long		0x7FF
+PSG_mask_0x7FF:		.long		0x000007FF
+PSG_mask_FFFF0000:	.long		0xFFFF0000
 
 lecture_registres_player_VBL_YM7:
 	ldr		R9,PSG_pointeur_structure_PSG
@@ -1760,7 +2039,7 @@ lecture_registres_player_VBL_YM7:
 
 ; ------------ faire un sid stop avant
 
-; voie A = + 2 registres
+; ================ voie A = + 2 registres
 	ldr		R1,[R9,#PSG_flag_effets_voie_A-PSG_structure_PSG]
 	cmp		R1,#0
 	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_A
@@ -1768,9 +2047,64 @@ lecture_registres_player_VBL_YM7:
 	ldrb	R1,[R12],R11			; registre additionnel 2
 	add		R0,R1,R0, lsl #8
 
+; bit 14 = SID
+	tst		R0,#0b0100000000000000									; bit 14 = SID
+	beq		lecture_registres_player_VBL_YM7_pas_SID_voie_A
+; SID sur la voie A
+
+	mov		R4,#1
+	str		R4,[R9,#PSG_flag_SID_voie_A-PSG_structure_PSG]
+
+	ldrb	R2,[R9,#PSG_register8-PSG_structure_PSG]						; registre 8 = numero de sample du SID
+	ldr		R3,[R9,#PSG_pointeur_table_pointeurs_SID-PSG_structure_PSG]				; table de pointeurs adresse SID + longueur		
+	add		R3,R3,R2,lsl #3
+	ldr		R4,[R3],#4												; R4=pointeur sur sample du SID
+	ldr		R3,[R3]													; R3= taille du SID non multiplié
+
+	ldr		R6,PSG_mask_0x7FF
+	and		R5,R0,R6						; R5 = 11 bits du bas de la frequence
+	
+	str		R4,[R9,#PSG_pointeur_sample_SID_voie_A-PSG_structure_PSG]
+	;str		R3,[R9,#PSG_taille_sample_SID_voie_A-PSG_structure_PSG]
+
+	ldr		R4,[R9,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
+; test bit 13 = reset virgule offset sample Sid
+	tst		R0,#0b0010000000000000
+	beq		lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_A
+	;ldr		R6,PSG_mask_FFFF0000
+	;and		R4,R4,R6							; mets à zéro les bits de virgule de l'offset du sample SID voie A
+	mov		R4,R4,lsr #16
+	mov		R4,R4,lsl #16							; mets à zéro les bits de virgule de l'offset du sample SID voie A
+	
+	
+
+lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_A:
+; test la taille actuelle du sid en cours, si <> : partie entiere = 0 + stocke la taille du sid 
+	ldr		R6,[R9,#PSG_taille_sample_SID_voie_A-PSG_structure_PSG]
+	cmp		R6,R3
+	beq		lecture_registres_player_VBL_YM7_taille_SID_identique_voie_A
+	
+;	and		R4,R4,#0x0000FFFF
+	mov		R4,R4,lsl #16
+	mov		R4,R4,lsr #16							; mets à zéro les bits de entier de l'offset du sample SID voie A
+	str		R3,[R9,#PSG_taille_sample_SID_voie_A-PSG_structure_PSG]
+	
+lecture_registres_player_VBL_YM7_taille_SID_identique_voie_A:
+	str		R4,[R9,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
+
+; frequence/increment SID voie A
+; valeur frq dans R5
+	ldr		R3,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
+	ldr		R5,[R3,R5,lsl #2]						; increment frequence en .L
+	str		R5,[R9,#PSG_increment_SID_voie_A-PSG_structure_PSG]
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_A
+
+
+lecture_registres_player_VBL_YM7_pas_SID_voie_A:
 ; bit 15 = DG
 	tst		R0,#0b1000000000000000
-	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_A
+	beq		lecture_registres_player_VBL_YM7_pas_DG_voie_A_sid_stop_voie_A
+
 
 ; digidrum voie A
 	mov		R4,#0
@@ -1797,21 +2131,81 @@ lecture_registres_player_VBL_YM7:
 	ldr		R2,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
 	ldr		R4,[R2,R0,lsl #2]						; increment frequence en .L
 	str		R4,[R9,#PSG_increment_digidrum_voie_A-PSG_structure_PSG]
-
-
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_A
+	
+lecture_registres_player_VBL_YM7_pas_DG_voie_A_sid_stop_voie_A:
+	mov		R4,#0
+	str		R4,[R9,#PSG_flag_SID_voie_A-PSG_structure_PSG]
+	
 lecture_registres_player_VBL_YM7_pas_effet_voie_A:
-; voie B = + 2 registres
+lecture_registres_player_VBL_YM7_pas_DG_voie_A:
+
+; ================ voie B = + 2 registres
 	ldr		R1,[R9,#PSG_flag_effets_voie_B-PSG_structure_PSG]
 	cmp		R1,#0
 	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_B
-
 	ldrb	R0,[R12],R11			; registre additionnel 1 << 8
 	ldrb	R1,[R12],R11			; registre additionnel 2
 	add		R0,R1,R0, lsl #8
 
+; bit 14 = SID
+	tst		R0,#0b0100000000000000									; bit 14 = SID
+	beq		lecture_registres_player_VBL_YM7_pas_SID_voie_B
+; SID sur la voie B
+
+	mov		R4,#1
+	str		R4,[R9,#PSG_flag_SID_voie_B-PSG_structure_PSG]
+
+	ldrb	R2,[R9,#PSG_register9-PSG_structure_PSG]						; registre 8 = numero de sample du SID
+	ldr		R3,[R9,#PSG_pointeur_table_pointeurs_SID-PSG_structure_PSG]				; table de pointeurs adresse SID + longueur		
+	add		R3,R3,R2,lsl #3
+	ldr		R4,[R3],#4												; R4=pointeur sur sample du SID
+	ldr		R3,[R3]													; R3= taille du SID non multiplié
+
+	ldr		R6,PSG_mask_0x7FF
+	and		R5,R0,R6						; R5 = 11 bits du bas de la frequence
+	
+	str		R4,[R9,#PSG_pointeur_sample_SID_voie_B-PSG_structure_PSG]
+	;str		R3,[R9,#PSG_taille_sample_SID_voie_B-PSG_structure_PSG]
+
+	ldr		R4,[R9,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
+; test bit 13 = reset virgule offset sample Sid
+	tst		R0,#0b0010000000000000
+	beq		lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_B
+	;ldr		R6,PSG_mask_FFFF0000
+	;and		R4,R4,R6							; mets à zéro les bits de virgule de l'offset du sample SID voie A
+	mov		R4,R4,lsr #16
+	mov		R4,R4,lsl #16							; mets à zéro les bits de virgule de l'offset du sample SID voie A
+	
+	
+
+lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_B:
+; test la taille actuelle du sid en cours, si <> : partie entiere = 0 + stocke la taille du sid 
+	ldr		R6,[R9,#PSG_taille_sample_SID_voie_B-PSG_structure_PSG]
+	cmp		R6,R3
+	beq		lecture_registres_player_VBL_YM7_taille_SID_identique_voie_B
+	
+;	and		R4,R4,#0x0000FFFF
+	mov		R4,R4,lsl #16
+	mov		R4,R4,lsr #16							; mets à zéro les bits de entier de l'offset du sample SID voie A
+	str		R3,[R9,#PSG_taille_sample_SID_voie_B-PSG_structure_PSG]
+	
+lecture_registres_player_VBL_YM7_taille_SID_identique_voie_B:
+	str		R4,[R9,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
+
+; frequence/increment SID voie B
+; valeur frq dans R5
+	ldr		R3,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
+	ldr		R5,[R3,R5,lsl #2]						; increment frequence en .L
+	str		R5,[R9,#PSG_increment_SID_voie_B-PSG_structure_PSG]
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_B
+
+
+lecture_registres_player_VBL_YM7_pas_SID_voie_B:
 ; bit 15 = DG
 	tst		R0,#0b1000000000000000
-	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_B
+	beq		lecture_registres_player_VBL_YM7_pas_DG_voie_B_sid_stop_voie_B
+
 
 ; digidrum voie B
 	mov		R4,#0
@@ -1838,23 +2232,83 @@ lecture_registres_player_VBL_YM7_pas_effet_voie_A:
 	ldr		R2,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
 	ldr		R4,[R2,R0,lsl #2]						; increment frequence en .L
 	str		R4,[R9,#PSG_increment_digidrum_voie_B-PSG_structure_PSG]
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_B
 	
-
+lecture_registres_player_VBL_YM7_pas_DG_voie_B_sid_stop_voie_B:
+	mov		R4,#0
+	str		R4,[R9,#PSG_flag_SID_voie_B-PSG_structure_PSG]
+	
 lecture_registres_player_VBL_YM7_pas_effet_voie_B:
-; voie C = + 2 registres
+lecture_registres_player_VBL_YM7_pas_DG_voie_B:
+
+
+; ================ voie C = + 2 registres
 	ldr		R1,[R9,#PSG_flag_effets_voie_C-PSG_structure_PSG]
 	cmp		R1,#0
 	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_C
-	
-
-
 	ldrb	R0,[R12],R11			; registre additionnel 1 << 8
 	ldrb	R1,[R12],R11			; registre additionnel 2
 	add		R0,R1,R0, lsl #8
 
+; bit 14 = SID
+	tst		R0,#0b0100000000000000									; bit 14 = SID
+	beq		lecture_registres_player_VBL_YM7_pas_SID_voie_C
+; SID sur la voie C
+
+	mov		R4,#1
+	str		R4,[R9,#PSG_flag_SID_voie_C-PSG_structure_PSG]
+
+	ldrb	R2,[R9,#PSG_register9-PSG_structure_PSG]						; registre 8 = numero de sample du SID
+	ldr		R3,[R9,#PSG_pointeur_table_pointeurs_SID-PSG_structure_PSG]				; table de pointeurs adresse SID + longueur		
+	add		R3,R3,R2,lsl #3
+	ldr		R4,[R3],#4												; R4=pointeur sur sample du SID
+	ldr		R3,[R3]													; R3= taille du SID non multiplié
+
+	ldr		R6,PSG_mask_0x7FF
+	and		R5,R0,R6						; R5 = 11 bits du bas de la frequence
+	
+	str		R4,[R9,#PSG_pointeur_sample_SID_voie_C-PSG_structure_PSG]
+	;str		R3,[R9,#PSG_taille_sample_SID_voie_C-PSG_structure_PSG]
+
+	ldr		R4,[R9,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
+; test bit 13 = reset virgule offset sample Sid
+	tst		R0,#0b0010000000000000
+	beq		lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_C
+	;ldr		R6,PSG_mask_FFFF0000
+	;and		R4,R4,R6							; mets à zéro les bits de virgule de l'offset du sample SID voie C
+	mov		R4,R4,lsr #16
+	mov		R4,R4,lsl #16							; mets à zéro les bits de virgule de l'offset du sample SID voie C
+	
+	
+
+lecture_registres_player_VBL_YM7_pas_reset_virgule_offset_voie_C:
+; test la taille actuelle du sid en cours, si <> : partie entiere = 0 + stocke la taille du sid 
+	ldr		R6,[R9,#PSG_taille_sample_SID_voie_C-PSG_structure_PSG]
+	cmp		R6,R3
+	beq		lecture_registres_player_VBL_YM7_taille_SID_identique_voie_C
+	
+;	and		R4,R4,#0x0000FFFF
+	mov		R4,R4,lsl #16
+	mov		R4,R4,lsr #16							; mets à zéro les bits de entier de l'offset du sample SID voie C
+	str		R3,[R9,#PSG_taille_sample_SID_voie_C-PSG_structure_PSG]
+	
+lecture_registres_player_VBL_YM7_taille_SID_identique_voie_C:
+	str		R4,[R9,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
+
+; frequence/increment SID voie C
+; valeur frq dans R5
+	ldr		R3,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
+	ldr		R5,[R3,R5,lsl #2]						; increment frequence en .L
+	str		R5,[R9,#PSG_increment_SID_voie_C-PSG_structure_PSG]
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_C
+
+
+lecture_registres_player_VBL_YM7_pas_SID_voie_C:
 ; bit 15 = DG
 	tst		R0,#0b1000000000000000
-	beq		lecture_registres_player_VBL_YM7_pas_effet_voie_C
+	beq		lecture_registres_player_VBL_YM7_pas_DG_voie_C_sid_stop_voie_C
+
+
 ; digidrum voie C
 	mov		R4,#0
 	str		R4,[R9,#PSG_offset_en_cours_digidrum_C-PSG_structure_PSG]
@@ -1863,7 +2317,7 @@ lecture_registres_player_VBL_YM7_pas_effet_voie_B:
 	mov		R1,#1
 	str		R1,[R9,#PSG_flag_digidrum_voie_C-PSG_structure_PSG]
 
-	ldrb	R1,[R9,#PSG_register10-PSG_structure_PSG]						; 5 bits du bas de volume C = numero de sample voie C
+	ldrb	R1,[R9,#PSG_register9-PSG_structure_PSG]						; 5 bits du bas de volume C = numero de sample voie C
 	str		R1,[R9,#PSG_numero_digidrum_voie_C-PSG_structure_PSG]
 
 
@@ -1880,21 +2334,81 @@ lecture_registres_player_VBL_YM7_pas_effet_voie_B:
 	ldr		R2,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
 	ldr		R4,[R2,R0,lsl #2]						; increment frequence en .L
 	str		R4,[R9,#PSG_increment_digidrum_voie_C-PSG_structure_PSG]
-
-
+	b		lecture_registres_player_VBL_YM7_pas_effet_voie_C
+	
+lecture_registres_player_VBL_YM7_pas_DG_voie_C_sid_stop_voie_C:
+	mov		R4,#0
+	str		R4,[R9,#PSG_flag_SID_voie_C-PSG_structure_PSG]
+	
 lecture_registres_player_VBL_YM7_pas_effet_voie_C:
+lecture_registres_player_VBL_YM7_pas_DG_voie_C:
+
+
+
+; ================= sync buzzer
 ; Sync buzzer = + 2 registres
 	ldr		R1,[R9,#PSG_flag_effets_Sync_buzzer-PSG_structure_PSG]
 	cmp		R1,#0
 	beq		lecture_registres_player_VBL_YM7_pas_effet_Sync_buzzer
-	swi		BKP
+	
+	ldrb	R0,[R12],R11			; registre additionnel 1 << 8
+	ldrb	R1,[R12],R11			; registre additionnel 2
+	add		R0,R1,R0, lsl #8		; R0=16 bits additionnels
 
+	mov		R2,#0					; stop le sync buzzer / flag de sync buzzer = 0
+
+; R0=registre 16 bits buzzer
+; R2=PSG_flag_buzzer
+	
+; bit 15 = Buzzer ?
+	tst		R0,#0b1000000000000000									; bit 15 = Buzzer
+	beq		lecture_registres_player_VBL_YM7_pas_effet_Sync_buzzer_bit15
+
+	mov		R2,#1					; R2= flag buzzer = 1
+	
+	ldr		R3,[R9,#PSG_register13-PSG_structure_PSG]				; registre 13 = numéro d'enveloppe-buzzer
+	and		R3,R3,#127
+
+	ldr		R4,[R9,#PSG_pointeur_datas_configuration_buzzer_fichier_YM7-PSG_structure_PSG]				; 496 @(496)
+	ldrb	R4,[R4,R3]																			; R4 = taille de l'enveloppe ( 01 01 04 )
+		
+	ldr		R5,PSG_mask_0x7FF
+	and		R6,R0,R5																		; limite la frequence à 11 bits
+	ldr		R5,[R9,#PSG_pointeur_table_MFP-PSG_structure_PSG]
+	add		R5,R5,R6,lsl #2
+	ldr		R5,[R5]
+	str		R5,[R9,#PSG_Buzzer_pointeur_freq_incr_envbuzzer_en_cours-PSG_structure_PSG]		; pointeur sur l'increment en fonction de la frequence
+	
+	
+	ldr		R5,[R9,#PSG_pointeur_vers_table_pointeurs_env_Buzzer-PSG_structure_PSG]						; @(500)
+	ldr		R5,[R5,R3,lsl #2]																	; R5 = pointeur mémoire env-buzzer
+	str		R5,[R9,#PSG_Buzzer_pointeur_sur_envbuzzer_en_cours-PSG_structure_PSG]
+	
+	tst		R0,#0b0010000000000000									; bit 13 = Buzzer, reset offset
+	bne		lecture_registres_player_VBL_YM7_reset_offset_Buzzer
+
+	ldr		R5,[R9,#PSG_Buzzer_taille_env_en_cours-PSG_structure_PSG]
+	cmp		R4,R5
+	beq		lecture_registres_player_VBL_YM7_pas_de_reset_offset_Buzzer
+	
+lecture_registres_player_VBL_YM7_reset_offset_Buzzer:
+	mov		R5,#0
+	str		R5,[R9,#PSG_Buzzer_pos_dans_env_buzzer_en_cours-PSG_structure_PSG]
+	str		R4,[R9,#PSG_Buzzer_taille_env_en_cours-PSG_structure_PSG]
+
+lecture_registres_player_VBL_YM7_pas_de_reset_offset_Buzzer:
+	
+	
+lecture_registres_player_VBL_YM7_pas_effet_Sync_buzzer_bit15:
+	str		R2,[R9,#PSG_flag_buzzer-PSG_structure_PSG]
+
+; ================= Sinus SID / D
 lecture_registres_player_VBL_YM7_pas_effet_Sync_buzzer:
 ; Sinus sid = + 1 registre
 	ldr		R1,[R9,#PSG_flag_effets_Sinus_sid_D-PSG_structure_PSG]
 	cmp		R1,#0
 	beq		lecture_registres_player_VBL_YM7_pas_effet_Sinus_sid_D
-	swi		BKP
+	swi		BKP				; OK
 
 lecture_registres_player_VBL_YM7_pas_effet_Sinus_sid_D:
 
@@ -1948,10 +2462,10 @@ PSG_interepretation_registres:
 
 	ldr		R10,PSG_pointeur_structure_PSG
 	
-	mov		R4,#0
-	str		R4,[R10,#PSG_flag_SID_voie_A-PSG_structure_PSG]
-	str		R4,[R10,#PSG_flag_SID_voie_B-PSG_structure_PSG]
-	str		R4,[R10,#PSG_flag_SID_voie_C-PSG_structure_PSG]
+	;mov		R4,#0
+	;str		R4,[R10,#PSG_flag_SID_voie_A-PSG_structure_PSG]
+	;str		R4,[R10,#PSG_flag_SID_voie_B-PSG_structure_PSG]
+	;str		R4,[R10,#PSG_flag_SID_voie_C-PSG_structure_PSG]
 
 	ldr		R12,[R10,#PSG_pointeur_table_de_frequences-PSG_structure_PSG]
 	
@@ -1987,7 +2501,10 @@ PSG_interepretation_registres:
 ; registre 6
 ; 5 bit noise frequency
 	ldrb	R0,[R10,#PSG_register6-PSG_structure_PSG]			; 5 bit noise frequency - Frequency of noise
-	and		R0,R0,#0b11111				; on ne garde que 5 bits
+	ands	R0,R0,#0b11111				; on ne garde que 5 bits
+	bne		PSG_interepretation_registres_frequence_Noise_pas_zero
+	mov		R0,#1
+PSG_interepretation_registres_frequence_Noise_pas_zero:
 	ldr		R0,[R12,R0,lsl #2]			; recupere l'increment de la frÃ©quence
 	str		R0,[R10,#PSG_increment_frequence_Noise-PSG_structure_PSG]
 
@@ -2049,9 +2566,9 @@ PSG_utilise_enveloppe_channel_A_volume_pas_a_zero:
 
 	ldr		R4,[R11,R0,lsl #2]										; volume du channel * 4 pour lire pointeur vers la table de volume
 	str		R4,[R10,#PSG_pointeur_table_volume_en_cours_channel_A-PSG_structure_PSG]			; pointeur table de volume actuel pour noise canal A
-	mov		R4,#0
-	str		R4,[R10,#PSG_flag_SID_voie_A-PSG_structure_PSG]
-	str		R4,[R10,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
+	;mov		R4,#0
+	;str		R4,[R10,#PSG_flag_SID_voie_A-PSG_structure_PSG]
+	;str		R4,[R10,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
 PSG_utilise_enveloppe_channel_A:
 
 ; test utilisation du volume channel B
@@ -2065,9 +2582,9 @@ PSG_utilise_enveloppe_channel_A:
 PSG_utilise_enveloppe_channel_B_volume_pas_a_zero:
 	ldr		R4,[R11,R0,lsl #2]										; volume du channel * 4 pour lire pointeur vers la table de volume
 	str		R4,[R10,#PSG_pointeur_table_volume_en_cours_channel_B-PSG_structure_PSG]			; pointeur table de volume actuel pour noise canal B
-	mov		R4,#0
-	str		R4,[R10,#PSG_flag_SID_voie_B-PSG_structure_PSG]
-	str		R4,[R10,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
+	;mov		R4,#0
+	;str		R4,[R10,#PSG_flag_SID_voie_B-PSG_structure_PSG]
+	;str		R4,[R10,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
 PSG_utilise_enveloppe_channel_B:
 
 ; test utilisation du volume channel C
@@ -2081,9 +2598,9 @@ PSG_utilise_enveloppe_channel_B:
 PSG_utilise_enveloppe_channel_C_volume_pas_a_zero:
 	ldr		R4,[R11,R0,lsl #2]										; volume du channel * 4 pour lire pointeur vers la table de volume
 	str		R4,[R10,#PSG_pointeur_table_volume_en_cours_channel_C-PSG_structure_PSG]			; pointeur table de volume actuel pour noise canal C
-	mov		R4,#0
-	str		R4,[R10,#PSG_flag_SID_voie_C-PSG_structure_PSG]
-	str		R4,[R10,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
+	;mov		R4,#0
+	;str		R4,[R10,#PSG_flag_SID_voie_C-PSG_structure_PSG]
+	;str		R4,[R10,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
 
 PSG_utilise_enveloppe_channel_C:
 
@@ -2299,11 +2816,75 @@ PSG_boucle_mixage_final:
 
 PSG_preparation_enveloppe_pour_la_VBL:
 	ldr		R9,PSG_pointeur_structure_PSG
-
 	ldr		R0,[R9,#PSG_increment_frequence_enveloppe-PSG_structure_PSG]
 	ldr		R1,[R9,#PSG_offset_actuel_parcours_forme_enveloppe-PSG_structure_PSG]
+
 ; test sync buzzer ici => routine de sync buzzer - TODO -
+
+	ldr		R2,[R9,#PSG_flag_buzzer-PSG_structure_PSG]
+	cmp		R2,#0
+	beq		PSG_preparation_enveloppe_pas_de_Buzzer
+
+	; swi bkp
 	
+	ldr		R5,[R9,#PSG_Buzzer_pointeur_sur_envbuzzer_en_cours-PSG_structure_PSG]				; A5
+	ldr		R2,[R9,#PSG_Buzzer_taille_env_en_cours-PSG_structure_PSG]							; D2
+	sub		R2,R2,#1
+	
+	ldr		R8,[R9,#PSG_Buzzer_pos_dans_env_buzzer_en_cours-PSG_structure_PSG]
+	and		R2,R8,R2																			; D2
+	add		R5,R5,R2,lsl #2
+	
+	ldr		R11,[R9,#PSG_pointeur_buffer_enveloppe_calculee_pour_cette_VBL-PSG_structure_PSG]
+	ldr		R12,[R9,#PSG_Buzzer_offset_parcours_envbuzzer-PSG_structure_PSG]
+	
+	ldr		R3,[R9,#PSG_Buzzer_pointeur_freq_incr_envbuzzer_en_cours-PSG_structure_PSG]
+	mov		R3,R3,lsl #YM2149_shift_Buzzer
+	
+	mov		R4,#0xFFE00000											; -32 pour sauter la 1ere partie non rÃ©pÃ©titive de l'enveloppe
+
+; c05f6e
+	ldr		R10,[R5],#4
+	mov		R7,#nb_octets_par_vbl
+	
+PSG_preparation_enveloppe_Buzzer_boucle:
+
+	adds	R1,R1,R0
+	adds	R2,R2,R3
+	bcc 	PSG_preparation_enveloppe_Buzzer_boucle_pas_de_depassement
+	
+	mov		R1,R4
+	mov		R0,R0,lsr #16
+	mov		R0,R0,lsl #16			; partie a virgule de l'offset = 0
+	ldr		R10,[R5],#4
+		
+PSG_preparation_enveloppe_Buzzer_boucle_pas_de_depassement:	
+	ldrb	R8,[R10,R1,asr #16]
+	strb	R8,[R11],#1
+
+	subs	R7,R7,#1
+	bgt		PSG_preparation_enveloppe_Buzzer_boucle
+
+	subs	R5,R5,#4
+	str		R12,[R9,#PSG_Buzzer_offset_parcours_envbuzzer-PSG_structure_PSG]
+	
+	ldr		R0,[R9,#PSG_Buzzer_pointeur_sur_envbuzzer_en_cours-PSG_structure_PSG]
+	subs	R5,R5,R0
+	mov		R5,R5,lsr #2
+	str		R5,[R9,#PSG_Buzzer_pos_dans_env_buzzer_en_cours-PSG_structure_PSG]
+
+	cmp		R1,#0
+	bmi		PSG_preparation_enveloppe_Buzzer_offset_negatif
+	ldr		R3,[R9,#PSG_mask_bouclage_enveloppe-PSG_structure_PSG]
+	and		R1,R3,R1							; on masque pour boucler	
+
+PSG_preparation_enveloppe_Buzzer_offset_negatif:
+	str		R1,[R9,#PSG_offset_actuel_parcours_forme_enveloppe-PSG_structure_PSG]
+
+	mov		pc,lr
+
+PSG_preparation_enveloppe_pas_de_Buzzer:
+
 	ldr		R3,[R9,#PSG_flag_enveloppe-PSG_structure_PSG]
 	cmp		R3,#0
 	bne		PSG_preparation_enveloppe_pour_la_VBL_il_y_a_une_enveloppe
@@ -2358,6 +2939,12 @@ PSG_mixage_Noise_et_Tone_voie_A:
 	ldr		R1,[R12,#PSG_offset_actuel_parcours_onde_carree_channel_A-PSG_structure_PSG]
 	ldr		R0,[R12,#PSG_increment_frequence_tone_channel_A-PSG_structure_PSG]
 	mov		R0,R0,lsl #YM2149_shift_onde_carre_Tone
+
+	cmp		R0,#0
+	bne		PSG_mixage_Noise_et_Tone_voie_A_pas_increment_a_zero
+	mov		R1,#-1
+PSG_mixage_Noise_et_Tone_voie_A_pas_increment_a_zero:
+
 	
 	mov		R7,#nb_octets_par_vbl
 
@@ -2375,7 +2962,7 @@ PSG_mixage_Noise_et_Tone_voie_A:
 
 	ldr		R12,[R12,#PSG_pointeur_buffer_Noise_calcule_pour_cette_VBL-PSG_structure_PSG]
 
-	mov		pc,R6
+	mov		pc,R6				; saut en R6 / routine
 	
 PSG_mixage_Noise_et_Tone_voie_A_retour:
 	ldr		R12,PSG_pointeur_structure_PSG
@@ -2390,6 +2977,10 @@ PSG_mixage_Noise_et_Tone_voie_B:
 	ldr		R0,[R12,#PSG_increment_frequence_tone_channel_B-PSG_structure_PSG]
 	mov		R0,R0,lsl #YM2149_shift_onde_carre_Tone
 
+	cmp		R0,#0
+	bne		PSG_mixage_Noise_et_Tone_voie_B_pas_increment_a_zero
+	mov		R1,#-1
+PSG_mixage_Noise_et_Tone_voie_B_pas_increment_a_zero:
 	
 	mov		R7,#nb_octets_par_vbl
 
@@ -2421,6 +3012,11 @@ PSG_mixage_Noise_et_Tone_voie_C:
 	ldr		R1,[R12,#PSG_offset_actuel_parcours_onde_carree_channel_C-PSG_structure_PSG]
 	ldr		R0,[R12,#PSG_increment_frequence_tone_channel_C-PSG_structure_PSG]
 	mov		R0,R0,lsl #YM2149_shift_onde_carre_Tone
+
+	cmp		R0,#0
+	bne		PSG_mixage_Noise_et_Tone_voie_C_pas_increment_a_zero
+	mov		R1,#-1
+PSG_mixage_Noise_et_Tone_voie_C_pas_increment_a_zero:
 	
 	mov		R7,#nb_octets_par_vbl
 
@@ -2548,31 +3144,45 @@ PSG_creation_buffer_effet_digidrum_ou_Sid_channel_A:
 
 ; il y a un SID sur voie A
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_A_SID:
+	ldr		R10,[R9,#PSG_pointeur_sample_SID_voie_A-PSG_structure_PSG]
 	ldr		R1,[R9,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
 	ldr		R0,[R9,#PSG_increment_SID_voie_A-PSG_structure_PSG]
-	mov		R0,R0,lsl #YM2149_shift_onde_carre_SID
-	
 	ldr		R11,[R9,#PSG_pointeur_buffer_destination_mixage_Digidrum_channel_A-PSG_structure_PSG]
 	str		R11,[R9,#PSG_pointeur_table_volume_en_cours_channel_A-PSG_structure_PSG]
 
-	mov		R4,#0							; volume min SID
-	ldr		R3,[R9,#PSG_vmax_SID_voie_A-PSG_structure_PSG]			; volume max SID
-	
-
 ; - mixage
+; parcours du sample DG Ã  la bonne frÃ©quence
 	mov		R7,#nb_octets_par_vbl
+	
 PSG_preparation_SID_A_boucle:
-	adds	R1,R1,R0						; offset + increment << 32
-	movmi	R2,R4							; volume MAX
-	movpl	R2,R3							; volume min
-	strb	R2,[R11],#1
+
+	add		R1,R1,R0				; incremente avec l'increment de frequence d'enveloppe
+	ldrb	R3,[R10,R1,lsr #16]		; source enveloppe en cours au rythme de la frequence
+	strb	R3,[R11],#1
+	
 	subs	R7,R7,#1
 	bgt		PSG_preparation_SID_A_boucle
-
-; test de fin du SID ?
-	str		R1,[R9,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
 	
-; retour
+
+; apres :
+; si offset parcours DG A> taille DG A => flag DG A = 0
+	mov		R3,R1,lsr #16						; partie entiere de l'offset de lecture du SID voie A
+	ldr		R5,[R9,#PSG_taille_sample_SID_voie_A-PSG_structure_PSG]
+	cmp		R1,R5
+	blt		PSG_preparation_SID_A_pas_de_bouclage
+
+	cmp		R5,#2
+	beq		PSG_preparation_SID_A_bouclage_valeur_2
+	swi BKP
+
+PSG_preparation_SID_A_bouclage_valeur_2:
+	and		R3,R3,#1
+	mov		R1,R1,lsl #16			; garde juste la virgule
+	mov		R1,R1,lsr #16
+	orr		R1,R1,R3, lsl #16 		; entier.w virgule.w
+	
+PSG_preparation_SID_A_pas_de_bouclage:
+	str		R1,[R9,#PSG_offset_en_cours_SID_A-PSG_structure_PSG]
 	mov		pc,lr
 
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_A_continue:
@@ -2631,31 +3241,44 @@ PSG_creation_buffer_effet_digidrum_ou_Sid_channel_B:
 
 ; il y a un SID sur voie B
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_B_SID:
+	ldr		R10,[R9,#PSG_pointeur_sample_SID_voie_B-PSG_structure_PSG]
 	ldr		R1,[R9,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
 	ldr		R0,[R9,#PSG_increment_SID_voie_B-PSG_structure_PSG]
-	mov		R0,R0,lsl #YM2149_shift_onde_carre_SID
-	
 	ldr		R11,[R9,#PSG_pointeur_buffer_destination_mixage_Digidrum_channel_B-PSG_structure_PSG]
 	str		R11,[R9,#PSG_pointeur_table_volume_en_cours_channel_B-PSG_structure_PSG]
 
-	mov		R4,#0							; volume min SID
-	ldr		R3,[R9,#PSG_vmax_SID_voie_B-PSG_structure_PSG]			; volume max SID
-	
-
 ; - mixage
+; parcours du sample SID a  la bonne frÃ©quence
 	mov		R7,#nb_octets_par_vbl
+	
 PSG_preparation_SID_B_boucle:
-	adds	R1,R1,R0						; offset + increment << 32
-	movmi	R2,R4							; volume MAX
-	movpl	R2,R3							; volume min
-	strb	R2,[R11],#1
+
+	add		R1,R1,R0				; incremente avec l'increment de frequence d'enveloppe
+	ldrb	R3,[R10,R1,lsr #16]		; source enveloppe en cours au rythme de la frequence
+	strb	R3,[R11],#1
+	
 	subs	R7,R7,#1
 	bgt		PSG_preparation_SID_B_boucle
-
-; test de fin du SID ?
-	str		R1,[R9,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
 	
-; retour
+
+; apres :
+	mov		R3,R1,lsr #16						; partie entiere de l'offset de lecture du SID voie B
+	ldr		R5,[R9,#PSG_taille_sample_SID_voie_B-PSG_structure_PSG]
+	cmp		R1,R5
+	blt		PSG_preparation_SID_B_pas_de_bouclage
+
+	cmp		R5,#2
+	beq		PSG_preparation_SID_B_bouclage_valeur_2
+	swi BKP
+
+PSG_preparation_SID_B_bouclage_valeur_2:
+	and		R3,R3,#1
+	mov		R1,R1,lsl #16			; garde juste la virgule
+	mov		R1,R1,lsr #16
+	orr		R1,R1,R3, lsl #16 		; entier.w virgule.w
+	
+PSG_preparation_SID_B_pas_de_bouclage:
+	str		R1,[R9,#PSG_offset_en_cours_SID_B-PSG_structure_PSG]
 	mov		pc,lr
 
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_B_continue:
@@ -2715,31 +3338,44 @@ PSG_creation_buffer_effet_digidrum_ou_Sid_channel_C:
 
 ; il y a un SID sur voie C
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_C_SID:
+	ldr		R10,[R9,#PSG_pointeur_sample_SID_voie_C-PSG_structure_PSG]
 	ldr		R1,[R9,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
 	ldr		R0,[R9,#PSG_increment_SID_voie_C-PSG_structure_PSG]
-	mov		R0,R0,lsl #YM2149_shift_onde_carre_SID
-	
 	ldr		R11,[R9,#PSG_pointeur_buffer_destination_mixage_Digidrum_channel_C-PSG_structure_PSG]
 	str		R11,[R9,#PSG_pointeur_table_volume_en_cours_channel_C-PSG_structure_PSG]
 
-	mov		R4,#0							; volume min SID
-	ldr		R3,[R9,#PSG_vmax_SID_voie_C-PSG_structure_PSG]			; volume max SID
-	
-
 ; - mixage
+; parcours du sample SID a  la bonne frÃ©quence
 	mov		R7,#nb_octets_par_vbl
+	
 PSG_preparation_SID_C_boucle:
-	adds	R1,R1,R0						; offset + increment << 32
-	movmi	R2,R4							; volume MAX
-	movpl	R2,R3							; volume min
-	strb	R2,[R11],#1
+
+	add		R1,R1,R0				; incremente avec l'increment de frequence d'enveloppe
+	ldrb	R3,[R10,R1,lsr #16]		; source enveloppe en cours au rythme de la frequence
+	strb	R3,[R11],#1
+	
 	subs	R7,R7,#1
 	bgt		PSG_preparation_SID_C_boucle
-
-; test de fin du SID ?
-	str		R1,[R9,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
 	
-; retour
+
+; apres :
+	mov		R3,R1,lsr #16						; partie entiere de l'offset de lecture du SID voie B
+	ldr		R5,[R9,#PSG_taille_sample_SID_voie_C-PSG_structure_PSG]
+	cmp		R1,R5
+	blt		PSG_preparation_SID_C_pas_de_bouclage
+
+	cmp		R5,#2
+	beq		PSG_preparation_SID_C_bouclage_valeur_2
+	swi BKP
+
+PSG_preparation_SID_C_bouclage_valeur_2:
+	and		R3,R3,#1
+	mov		R1,R1,lsl #16			; garde juste la virgule
+	mov		R1,R1,lsr #16
+	orr		R1,R1,R3, lsl #16 		; entier.w virgule.w
+	
+PSG_preparation_SID_C_pas_de_bouclage:
+	str		R1,[R9,#PSG_offset_en_cours_SID_C-PSG_structure_PSG]
 	mov		pc,lr
 
 PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_C_continue:
@@ -2903,6 +3539,12 @@ valeur_1_div_14:	.long		4682				; ( 1/14 * 65536	) +1
 
 ; SID
 PSG_nb_SID:					.long		0
+PSG_taille_sample_SID_voie_A:	.long		0
+PSG_taille_sample_SID_voie_B:	.long		0
+PSG_taille_sample_SID_voie_C:	.long		0
+PSG_pointeur_sample_SID_voie_A:	.long		0
+PSG_pointeur_sample_SID_voie_B:	.long		0
+PSG_pointeur_sample_SID_voie_C:	.long		0
 PSG_increment_SID_voie_A:	.long		0
 PSG_increment_SID_voie_B:	.long		0
 PSG_increment_SID_voie_C:	.long		0
@@ -2915,6 +3557,10 @@ PSG_flag_SID_voie_C:		.long		0
 PSG_offset_en_cours_SID_A:	.long		0
 PSG_offset_en_cours_SID_B:	.long		0
 PSG_offset_en_cours_SID_C:	.long		0
+PSG_taille_totale_des_SID:	.long		0
+PSG_adresse_debut_SID:		.long		0
+PSG_pointeur_table_pointeurs_SID:		.long		PSG_table_pointeurs_SID
+
 
 ; buzzer
 PSG_nb_buzzer:				.long		0
@@ -2984,6 +3630,18 @@ PSG_numero_bloc_en_cours:			.long		0
 PSG_nb_bloc_fichier_YM7:			.long		0
 PSG_nb_registres_par_frame:			.long		0
 
+; Buzzer
+PSG_pointeur_vers_table_pointeurs_env_Buzzer:			.long	PSG_table_pointeurs_enveloppes_Buzzer			; @(500)
+PSG_flag_buzzer:										.long		0						; flag buzzer ON/OFF pendant le replay
+PSG_pointeur_datas_configuration_buzzer_fichier_YM7:	.long		0						; 496 @(496)
+PSG_adresse_debut_table_env_Buzzer:						.long		0						; pointeur vers memoire allouée pour les adresses vers enveloppes
+PSG_nb_env_Buzzer:										.long		0						; nombre d'enveloppes-buzzer
+PSG_pointeur_numeros_env_buzzer_fichier_YM7:			.long		0						; 
+PSG_Buzzer_taille_env_en_cours:							.long		0						; @(118) = taille de l'enveloppe buzzer en nb d'enveloppes
+PSG_Buzzer_pointeur_sur_envbuzzer_en_cours:				.long		0						; @(112) = pointeur sur l'env buzzer en cours de replay
+PSG_Buzzer_pos_dans_env_buzzer_en_cours:				.long		0						; @(116) = position numérique dans la liste des env-buzzer
+PSG_Buzzer_pointeur_freq_incr_envbuzzer_en_cours:		.long		0						; @(104) = pointeur sur la frequence d'increment
+PSG_Buzzer_offset_parcours_envbuzzer:					.long		0						; @(108)= offset parcours env-buzzer
 
 ; YM registers
 PSG_registres:
@@ -3005,6 +3663,7 @@ PSG_register14:	.byte		0
 PSG_register15:	.byte		0
 
 PSG_table_pointeurs_digidrums:
+; 32  entrees
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
@@ -3013,6 +3672,32 @@ PSG_table_pointeurs_digidrums:
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
 	.long		-1,-1,-1,-1,-1,-1,-1,-1
+
+PSG_table_pointeurs_SID:
+; 64  entrees
+	.rept		2
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.endr
+
+PSG_table_pointeurs_enveloppes_Buzzer:
+; 32  entrees
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+	.long		-1,-1,-1,-1,-1,-1,-1,-1
+
+
 
 PSG_tableau_des_blocs_decompresses:
 ; pointeur adresse bloc mémoire decompressé, écart entre les registres pour ce bloc
@@ -3057,11 +3742,15 @@ PSG_base_enveloppe:
 	.p2align	2
 
 YM7packed:
+	.incbin		"Mad_Max_Buzzer.ym7"					; YM7 buzzer + SID
+	;.incbin		"DMA_Sc_Fantasia_main.ym7"					; YM7 SID
+	; .incbin		"Furax_Virtualescape_main.ym7"				; YM7 SID
+	; .incbin		"MadMax_Virtual_Esc_End.ym7"			; YM7 SID voie A
 	;.incbin		"Jess_For_Your_Loader.ym7"				; YM7 sans effets avec env
 	;.incbin		"ancool_atari_baby.ym7"				; YM7 sans effets
 	;.incbin		"Decade_boot.ym7"					; YM7 avec env
-	.incbin		"PYM_main_menu.ym7"					; YM7 avec enveloppe et digidrums
-	;.incbin		"buzztone.ym7"						; digidrums sur B & C
+	;.incbin		"PYM_main_menu.ym7"					; YM7 avec enveloppe et digidrums
+	; .incbin		"buzztone.ym7"						; digidrums sur B & C
 FIN_YM7packed:
 	.p2align	2
 
