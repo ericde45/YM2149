@@ -10,8 +10,10 @@
 ; OK gérer digidrums : replay
 ; OK gérer SID : init
 ; OK gérer SID : replay
-; - gérer Sync buzzer : init
-; - gérer Sync buzzer : replay
+; OK gérer Sync buzzer : init
+; OK gérer Sync buzzer : replay
+; - passer à 4 voies 
+; - bug sur buzzer vers 3 minutes
 ; - gérer Sinus SID : init
 ; - gérer Sinus SID : replay
 
@@ -23,7 +25,7 @@
 .equ		longueur_du_sample,				75851
 
 ; parametrage 
-.equ		frequence_replay,	62500							; 20833 / 31250 / 62500
+.equ		frequence_replay,	31250							; 20833 / 31250 / 62500
 .equ		nombre_de_voies,	1
 .if frequence_replay = 20833	
 	.equ		nb_octets_par_vbl,	416								; 416 : 416x50.0801282 = 20 833,333
@@ -227,8 +229,15 @@ main:
 	mov   r0,r0
 
 ; met le dma en place
+	SWI		22
+	MOVNV R0,R0
 	bl		set_dma_dma1
+	teqp  r15,#0                     
+	mov   r0,r0	
 	bl		swap_pointeurs_dma_son	
+
+	SWI		22
+	MOVNV R0,R0  
 
 ; write memc control register, start sound
 
@@ -1705,7 +1714,7 @@ init_fichier_ym7_pas_de_buzzer:
 	cmp		R1,#0
 	beq		init_fichier_ym7_pas_de_sinus_sid
 
-	swi BKP
+	swi BKP			; OK
 	
 init_fichier_ym7_pas_de_sinus_sid:
 
@@ -2819,13 +2828,15 @@ PSG_preparation_enveloppe_pour_la_VBL:
 	ldr		R0,[R9,#PSG_increment_frequence_enveloppe-PSG_structure_PSG]
 	ldr		R1,[R9,#PSG_offset_actuel_parcours_forme_enveloppe-PSG_structure_PSG]
 
-; test sync buzzer ici => routine de sync buzzer - TODO -
+	;swi BKP
+
+; test sync buzzer ici => routine de sync buzzer 
 
 	ldr		R2,[R9,#PSG_flag_buzzer-PSG_structure_PSG]
 	cmp		R2,#0
 	beq		PSG_preparation_enveloppe_pas_de_Buzzer
 
-	; swi bkp
+; +-+-+-+- remplissage ENV Buzzer
 	
 	ldr		R5,[R9,#PSG_Buzzer_pointeur_sur_envbuzzer_en_cours-PSG_structure_PSG]				; A5
 	ldr		R2,[R9,#PSG_Buzzer_taille_env_en_cours-PSG_structure_PSG]							; D2
@@ -2846,16 +2857,17 @@ PSG_preparation_enveloppe_pour_la_VBL:
 ; c05f6e
 	ldr		R10,[R5],#4
 	mov		R7,#nb_octets_par_vbl
+
 	
 PSG_preparation_enveloppe_Buzzer_boucle:
 
 	adds	R1,R1,R0
-	adds	R2,R2,R3
+	adds	R12,R12,R3
 	bcc 	PSG_preparation_enveloppe_Buzzer_boucle_pas_de_depassement
 	
 	mov		R1,R4
-	mov		R0,R0,lsr #16
-	mov		R0,R0,lsl #16			; partie a virgule de l'offset = 0
+	;mov		R1,R1,lsr #16
+	;mov		R1,R1,lsl #16			; partie a virgule de l'offset = 0
 	ldr		R10,[R5],#4
 		
 PSG_preparation_enveloppe_Buzzer_boucle_pas_de_depassement:	
@@ -2864,6 +2876,7 @@ PSG_preparation_enveloppe_Buzzer_boucle_pas_de_depassement:
 
 	subs	R7,R7,#1
 	bgt		PSG_preparation_enveloppe_Buzzer_boucle
+; fin de boucle de remplissage ENV buzzer
 
 	subs	R5,R5,#4
 	str		R12,[R9,#PSG_Buzzer_offset_parcours_envbuzzer-PSG_structure_PSG]
@@ -2883,6 +2896,7 @@ PSG_preparation_enveloppe_Buzzer_offset_negatif:
 
 	mov		pc,lr
 
+; +-+-+-+- remplissage ENV normale
 PSG_preparation_enveloppe_pas_de_Buzzer:
 
 	ldr		R3,[R9,#PSG_flag_enveloppe-PSG_structure_PSG]
@@ -3488,7 +3502,8 @@ PSG_tables_de_16_volumes:
 	.p2align     2
 PSG_tables_de_16_volumes_DG:
 	.byte		0x00,0x00,0x00,0x00,0x01,0x02,0x02,0x04,0x05,0x08,0x0B,0x10,0x18,0x22,0x37,0x55
-
+	.p2align	2
+	
 PSG_compteur_frames:				.long		0
 PSG_compteur_frames_restantes:		.long		0
 
@@ -3661,6 +3676,7 @@ PSG_register12:	.byte		0
 PSG_register13:	.byte		0
 PSG_register14:	.byte		0
 PSG_register15:	.byte		0
+	.p2align	2
 
 PSG_table_pointeurs_digidrums:
 ; 32  entrees
@@ -3751,6 +3767,7 @@ YM7packed:
 	;.incbin		"Decade_boot.ym7"					; YM7 avec env
 	;.incbin		"PYM_main_menu.ym7"					; YM7 avec enveloppe et digidrums
 	; .incbin		"buzztone.ym7"						; digidrums sur B & C
+	.p2align	2
 FIN_YM7packed:
 	.p2align	2
 
@@ -3806,5 +3823,6 @@ fin_sample:
 ;	.skip		nb_octets_par_vbl
 ;	.p2align	2
 
-	
+		.p2align	2
 FIN_DATA:
+	.p2align	2
