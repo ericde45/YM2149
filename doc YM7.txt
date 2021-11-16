@@ -81,5 +81,5 @@ jusqu'a 23 registres:
 	- 14 de base : 0 a 13
 	- 2 par voie si effet => 6  
 	- 2 pour Sync Buzzer
-	- 1 pour D
+	- 1 pour D : 7 bits. bit7=active sinus sid/ bit 6-2=numero de sample /bit 1-0 = index frequence ( valeurs possibles : $0236 $011B $008D $008D )
 

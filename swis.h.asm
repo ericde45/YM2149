@@ -6,6 +6,7 @@
 .equ OS_Word, 7
 .equ OS_File, 8
 .equ OS_Exit, 0x11
+.equ OS_ExitAndDie, 0x50
 .equ OS_BreakPt, 0x17
 .equ OS_ChangeDynamicArea, 0x2a
 .equ OS_GenerateError, 0x2b
