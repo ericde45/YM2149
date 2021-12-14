@@ -15,3 +15,7 @@ all replay frequencies OK ( 50Hz, 53Hz, 200Hz ...)
 using 4 Archimedes sound voices.
 
 final result : https://youtu.be/m1BoLo7sVp4 
+
+original work for YM format by Arnaud Carré : https://github.com/arnaud-carre/StSound
+
+musics and original YM7 code from https://www.pouet.net/prod.php?which=85276
