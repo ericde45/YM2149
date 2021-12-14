@@ -15,11 +15,16 @@
 ; OK passer à 2 voies 
 ; OK passer à 4 voies 
 ; OK bug sur buzzer vers 3 minutes / bouclage taille du dernier bloc LZ4
-; - division pour bouclage SID
+; OK division pour bouclage SID
 ; OK gérer Sinus SID : init
 ; OK gérer Sinus SID : replay - jamais de bouclage
-; - gérer le tout sur des fréquences <> de 50 hz
+; OK gérer le tout sur des fréquences <> de 50 hz
 ; OK verifier bouclage musique OK 
+; - optimiser l'ensemble
+;	- déboucler un peu : *16 / *4 / *1
+;	- mixage Sinus sid = ne lire des octets que si nécessaire
+;	- reflechir a la meme chose ailleurs ?
+
 
 .equ		taille_totale_BSS,	256+(16*4)+(nb_octets_par_vbl*16)+16384+nb_octets_par_vbl+(4*16)+(16*86*32)+nb_octets_par_vbl+nb_octets_par_vbl+nb_octets_par_vbl+nb_octets_par_vbl
 
@@ -78,6 +83,12 @@
 	.org 0x8000
 	
 main:
+	mov		R0,#131072				; New size of current slot
+	mov		R1,#-1				;  	New size of next slot
+	SWI		Wimp_SlotSize			; Wimp_SlotSize 
+
+
+
 	SWI		0x01
 	.if frequence_replay = 20833
 		.byte	"-20.8 Khz YM7 replay- ",0
@@ -285,14 +296,65 @@ main:
 	teqp  r15,#0                     
 	mov   r0,r0 
 
+; je n'ai pas d'octets qui restent à produire sans replay
+	ldr		R12,PSG_pointeur_structure_PSG_haut
+	mov		R0,#0
+	str		R0,[R12,#PSG_nb_octet_restant_avant_prochain_replay_complet-PSG_structure_PSG]
 
 
-
-
-;------------------------------------------------ boucle centrale
+;------------------------------------------------ boucle centrale VBL
 
 boucle:
 	bl		affiche_ligne_infos
+
+
+; gestion de frequence differente de 50 HZ
+; on demarre un nouveau buffer DMA audio
+	ldr		R12,PSG_pointeur_structure_PSG_haut
+
+; on se met au debut du buffer DMA
+	ldr		R0,[R12,#adresse_dma1_logical-PSG_structure_PSG]
+	str		R0,[R12,#PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL-PSG_structure_PSG]
+	
+	mov		R0,#nb_octets_par_vbl
+	str		R0,[R12,#PSG_nb_octets_pour_cette_VBL-PSG_structure_PSG]
+
+	ldr		R2,[R12,#PSG_nb_octet_restant_avant_prochain_replay_complet-PSG_structure_PSG]
+	cmp		R2,#0
+	beq		boucle_principale_il_ne_reste_pas_d_octets_du_precedent_replay
+
+; nb octets a produire = octets du precedent replay
+	str		R2,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
+; on met a zero le nb d ocets a produire sans replay
+	mov		R1,#0
+	str		R1,[R12,#PSG_nb_octet_restant_avant_prochain_replay_complet-PSG_structure_PSG]
+; on saute pour les produire sans replay
+	b		mixage_PSG_sans_replay
+
+boucle_replay:
+boucle_principale_il_ne_reste_pas_d_octets_du_precedent_replay:
+
+	ldr		R12,PSG_pointeur_structure_PSG_haut
+
+	ldr		R0,[R12,#PSG_nb_octets_pour_cette_VBL-PSG_structure_PSG]
+	ldr		R1,[R12,#PSG_nb_octet_par_run_de_replay-PSG_structure_PSG]
+	
+	cmp		R0,R1
+	bgt		boucle_replay_il_faut_produire_un_replay_entier
+; on doit produire uniquement PSG_nb_octets_pour_cette_VBL
+	str		R0,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
+	
+	subs	R2,R1,R0			; R2 = nb octet par run de replay - nb octets restant pour cette VBL
+	str		R2,[R12,#PSG_nb_octet_restant_avant_prochain_replay_complet-PSG_structure_PSG]
+		
+	b		boucle_replay_il_faut_produire_un_replay_partiel
+
+boucle_replay_il_faut_produire_un_replay_entier:
+; on doit produire nb octet par run
+	str		R1,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
+
+boucle_replay_il_faut_produire_un_replay_partiel:
+
 
 	.ifeq	1
 	mov		R0,#5750
@@ -302,12 +364,12 @@ boucle_attente:
 	bgt		boucle_attente
 	.endif
 
-
+; +++++ROUGE VIF
 	SWI		22
 	MOVNV R0,R0            
 
 	mov   r0,#0x3400000               
-	mov   r1,#100
+	mov   r1,#0x0F
 ; border	
 	orr   r1,r1,#0x40000000              
 	str   r1,[r0]                     
@@ -320,22 +382,140 @@ boucle_attente:
 ; routines en VBL
 
 	bl		lecture_registres_player_VBL_YM7									; lecture des données pour les registres YM / YM7
-	bl		PSG_interepretation_registres
-	bl		PSG_fabrication_Noise_pour_cette_VBL								; fabrique un noise avec la bonne frequence pour cette VBL
+
+; ++++++++++++++++++++++++++++++++++++++++++++++++
+; ------++++ mixage sans replay +++++-------------
+; ++++++++++++++++++++++++++++++++++++++++++++++++
+mixage_PSG_sans_replay:
+
+; +++++VERT VIF	
+		SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#0XF0
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
 	
+	bl		PSG_interepretation_registres
+
+; +++++BLEU VIF		
+		SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#0xF00
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
+	
+	
+	bl		PSG_fabrication_Noise_pour_cette_VBL								; fabrique un noise avec la bonne frequence pour cette VBL
+
+; +++++BLANC VIF
+	SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#0xFFF
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
+
 
 	bl		PSG_mixage_Noise_et_Tone_voie_A										; mixe onde carrÃ©e Ã  la bonne frÃ©quence et noise fabriquÃ© Ã  la bonne frÃ©quence
 	bl		PSG_mixage_Noise_et_Tone_voie_B
 	bl		PSG_mixage_Noise_et_Tone_voie_C
 
+; +++++ROSE VIF
+	SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#0xF0F
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
+
 	bl		PSG_preparation_enveloppe_pour_la_VBL								; crÃ©er une enveloppe Ã  la bonne frÃ©quence en fonction de la forme choisie
+
+; +++++CYAN bleu clair
+	SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#0xFF0
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
 
 	bl		PSG_creation_buffer_effet_digidrum_ou_Sid_channel_A
 	bl		PSG_creation_buffer_effet_digidrum_ou_Sid_channel_B
 	bl		PSG_creation_buffer_effet_digidrum_ou_Sid_channel_C
+
+; 220=JAUNE
+	SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#220
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
+
 	
 	bl		PSG_mixage_final
+
+; 330=ORANGE
+	SWI		22
+	MOVNV R0,R0            
+
+	mov   r0,#0x3400000               
+	mov   r1,#330
+; border	
+	orr   r1,r1,#0x40000000              
+	str   r1,[r0]                     
+
+	teqp  r15,#0                     
+	mov   r0,r0	
+
+
 	bl		PSG_fill_dma_buffer_voice4_Sinus_Sid
+
+	ldr		R12,PSG_pointeur_structure_PSG_haut
+	ldr		R2,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
+	ldr		R1,[R12,#PSG_nb_octets_pour_cette_VBL-PSG_structure_PSG]
+	
+	subs	R1,R1,R2			; R1 = nb octets pour cette VBL - ceux qui viennent d'etre produits
+	beq		on_a_fini_le_buffer_dma
+	
+	str		R1,[R12,#PSG_nb_octets_pour_cette_VBL-PSG_structure_PSG]
+	
+	b		boucle_replay
+
+;- fin de la boucle de mixage / replay PSG
+
+on_a_fini_le_buffer_dma:
+
 
 ; on swap aprÃ¨s
 	SWI		22
@@ -351,7 +531,7 @@ boucle_attente:
 	MOVNV R0,R0            
 
 	mov   r0,#0x3400000               
-	mov   r1,#000  
+	mov   r1,#0x000  
 ; border	
 	orr   r1,r1,#0x40000000               
 	str   r1,[r0]  
@@ -1284,19 +1464,71 @@ init_fichier_YM7_frame_in_hz:
 	add		R1,R1,R2						; R1 =  Player frequency in Hz
 	str		R1,[R12,#PSG_replay_frequency_HZ-PSG_structure_PSG]
 	
-	cmp		R1,#50
-	bne		init_fichier_YM7_frame_in_hz_pas50
-	SWI		0x01
-	.byte	"replay : 50 hz.",10,13,0
-	.p2align 2
-	b		init_fichier_YM_loop_frame_ym7
-	
-init_fichier_YM7_frame_in_hz_pas50:
-	SWI		0x01
-	.byte	"replay NOT 50 hz.",10,13,0
-	.p2align 2	
+; calcul du nb d'octets par run de replay
+	mov		R8,R0
+	mov		R9,R1
+	mov		R10,R14
 
-init_fichier_YM_loop_frame_ym7:
+
+; vbl archimedes = 50.0801282
+; (nb octets * 50) / frequence
+
+	mov		R2,#nb_octets_par_vbl
+	mov		R3,#50
+	mul		R1,R2,R3
+	
+	mov		R2,R9
+
+; R0 = R1/R2 / R1=reste
+	bl		routine_division_R0_egal_R1_divise_par_R2
+	
+	str		R0,[R12,#PSG_nb_octet_par_run_de_replay-PSG_structure_PSG]
+
+	mov		R14,R10
+	mov		R0,R8
+	mov		R1,R9
+
+; R1 = frequence replay HZ
+
+	mov		R8,R0
+	mov		R9,R1
+	mov		R10,R14
+
+; on divise par 100
+	mov		R1,R9			; frequence HZ
+	mov		R2,#100
+	bl		routine_division_R0_egal_R1_divise_par_R2
+	cmp		R0,#0
+	beq		init_fichier_YM7_frequence_replay_centaine_egal_zero
+	add		R0,R0,#48				;"0"
+	strb	R0,init_fichier_YM7_frequence_replay_centaine	
+
+; on divise par 10
+init_fichier_YM7_frequence_replay_centaine_egal_zero:
+	mov		R2,#10
+	
+	bl		routine_division_R0_egal_R1_divise_par_R2
+; R0=dizaine
+; R1=reste/unite
+	add		R0,R0,#48				;"0"
+	strb	R0,init_fichier_YM7_frequence_replay_dizaine
+	add		R1,R1,#48				;"0"
+	strb	R1,init_fichier_YM7_frequence_replay_unite
+
+	SWI		0x01
+	.byte	"replay : "
+init_fichier_YM7_frequence_replay_centaine:
+	.byte	" "
+init_fichier_YM7_frequence_replay_dizaine:
+	.byte	"2"
+init_fichier_YM7_frequence_replay_unite:
+	.byte	"2 hz.",10,13,0
+	.p2align 2
+
+	mov		R14,R10
+	mov		R0,R8
+	mov		R1,R9
+	
 
 ; mask effets sur les voies
 	ldrb	R1,[R0],#1
@@ -2970,7 +3202,7 @@ PSG_fabrication_Noise_pour_cette_VBL:
 ; parcours du Noise
 ; 00c060de
 	
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 
 PSG_boucle_calcul_Noise_pour_VBL:
 	add		R1,R1,R0				; incremente l'offset suivant la frequence du Noise
@@ -3000,7 +3232,7 @@ PSG_pas_de_Noise_cette_VBL:
 
 ; maxi = 3 * $55 = 255 / $FF
 ;
-mask_signature_sample:		.long		0x80808080
+mask_signature_sample:		.long		0x00000080
 save_R14_mixage:			.long		0
 save_R13_mixage:			.long		0
 ;adresse_dma1_logical_tmp:	.long		adresse_dma1_logical
@@ -3014,7 +3246,7 @@ PSG_mixage_final:
 
 	;ldr		R6,adresse_dma1_logical_tmp
 	;ldr		R6,[R6]
-	ldr		R6,[R9,#adresse_dma1_logical-PSG_structure_PSG]
+	ldr		R6,[R9,#PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL-PSG_structure_PSG]
 	
 	
 	ldr		R0,[R9,#PSG_pointeur_buffer_destination_mixage_Noise_channel_A-PSG_structure_PSG]
@@ -3027,8 +3259,7 @@ PSG_mixage_final:
 
 ; test flag effet dans enveloppe , si oui, remplacer R3 R4 R5 / digidrum / sinus sid
 
-	mov		R7,#nb_octets_par_vbl
-	mov		R7,R7,lsr #2				; / 4
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	ldr		R8,mask_signature_sample
 
 	ldr		R13,[R9,#pointeur_table_lin2logtab-PSG_structure_PSG]
@@ -3036,25 +3267,18 @@ PSG_mixage_final:
 
 PSG_boucle_mixage_final:
 
-	ldr		R11,[R0],#4					; R9 = noise + tone voie A
-	ldr		R12,[R3],#4					; R12 = table de volume A/enveloppe/enveloppe modifiÃ©e
+	ldrb	R11,[R0],#1					; R9 = noise + tone voie A
+	ldrb	R12,[R3],#1					; R12 = table de volume A/enveloppe/enveloppe modifiÃ©e
 	and		R11,R11,R12
 	
-	ldr		R10,[R1],#4					; R10 = noise + tone voie B
-	ldr		R12,[R4],#4					; R12 = table de volume B/enveloppe/enveloppe modifiÃ©e
+	ldrb	R10,[R1],#1					; R10 = noise + tone voie B
+	ldrb	R12,[R4],#1					; R12 = table de volume B/enveloppe/enveloppe modifiÃ©e
 	and		R10,R10,R12
 
-	ldr		R9,[R2],#4					; R9 = noise + tone voie C
-	ldr		R12,[R5],#4					; R12 = table de volume C/enveloppe/enveloppe modifiÃ©e
+	ldrb	R9,[R2],#1					; R9 = noise + tone voie C
+	ldrb	R12,[R5],#1					; R12 = table de volume C/enveloppe/enveloppe modifiÃ©e
 	and		R9,R9,R12
 
-	;add		R9,R9,R10
-	;add		R9,R9,R11					; somme des 3 voies
-	
-	; kaka:
-	;mov			R9,R10					; uniquement voie B
-	;mov			R9,R11					; uniquement voie C
-	
 	eor		R9,R9,R8					; signature du sample
 	eor		R10,R10,R8					; signature du sample
 	eor		R11,R11,R8					; signature du sample
@@ -3062,110 +3286,39 @@ PSG_boucle_mixage_final:
 	
 ; lin2log
 ;-
-	and		R12,R9,#0xFF				; octet 1
-	ldrb	R12,[R13,R12]				; R12=lin2log(R12.b0)
+	ldrb	R12,[R13,R9]				; R12=lin2log(R12.b0)
 	strb	R12,[R6],#1
 	.if		nombre_de_voies=8
 		strb	R12,[R6],#1
 	.endif
 
-	and		R12,R10,#0xFF				; octet 1
-	ldrb	R12,[R13,R12]				; R12=lin2log(R12.b0)
+	ldrb	R12,[R13,R10]				; R12=lin2log(R12.b0)
 	strb	R12,[R6],#1
 	.if		nombre_de_voies=8
 		strb	R12,[R6],#1
 	.endif
 
-	and		R12,R11,#0xFF				; octet 1
-	ldrb	R12,[R13,R12]				; R12=lin2log(R12.b0)
+	ldrb	R12,[R13,R11]				; R12=lin2log(R12.b0)
 	strb	R12,[R6],#2
 	.if		nombre_de_voies=8
 		strb	R12,[R6],#2
 	.endif
-
-;-
-	and		R12,R9,#0xFF00				; octet 2
-	ldrb	R12,[R13,R12,lsr #8]		; R12=lin2log(R12.b1)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R10,#0xFF00				; octet 2
-	ldrb	R12,[R13,R12,lsr #8]		; R12=lin2log(R12.b1)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R11,#0xFF00				; octet 2
-	ldrb	R12,[R13,R12,lsr #8]		; R12=lin2log(R12.b1)
-	strb	R12,[R6],#2
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#2
-	.endif
-
-;-
-
-	and		R12,R9,#0xFF0000				; octet 3
-	ldrb	R12,[R13,R12,lsr #16]		; R12=lin2log(R12.b2)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R10,#0xFF0000				; octet 3
-	ldrb	R12,[R13,R12,lsr #16]		; R12=lin2log(R12.b2)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R11,#0xFF0000				; octet 3
-	ldrb	R12,[R13,R12,lsr #16]		; R12=lin2log(R12.b2)
-	strb	R12,[R6],#2
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#2
-	.endif
-
-;-
-	and		R12,R9,#0xFF000000				; octet 4
-	ldrb	R12,[R13,R12,lsr #24]		; R12=lin2log(R12.b3)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R10,#0xFF000000				; octet 4
-	ldrb	R12,[R13,R12,lsr #24]		; R12=lin2log(R12.b3)
-	strb	R12,[R6],#1
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#1
-	.endif
-
-	and		R12,R11,#0xFF000000				; octet 4
-	ldrb	R12,[R13,R12,lsr #24]		; R12=lin2log(R12.b3)
-	strb	R12,[R6],#2
-	.if		nombre_de_voies=8
-		strb	R12,[R6],#2
-	.endif
-
 	
 	subs	R7,R7,#1
 	bgt		PSG_boucle_mixage_final
-
+	
 	ldr		R13,save_R13_mixage
 	ldr		pc,save_R14_mixage
 
 ; --------------------------------------------------------
-;  on remplit adresse_dma1_logical + 3
+;  on remplit adresse_dma1_logical / PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL + 3
 ; avec le sample Sinus Sid a la bonne frequence
 ; ne gere pas 8 voies
 PSG_sample_silence_remplissage_Sinus_Sid_local:		.long		0,0
 
 PSG_fill_dma_buffer_voice4_Sinus_Sid:
 	ldr		R9,PSG_pointeur_structure_PSG
-	ldr		R6,[R9,#adresse_dma1_logical-PSG_structure_PSG]
+	ldr		R6,[R9,#PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL-PSG_structure_PSG]
 	add		R6,R6,#3				; on se met sur la voie 4
 
 ; on commence simple, sans double buffer registres internes paula
@@ -3178,7 +3331,7 @@ PSG_fill_dma_buffer_voice4_Sinus_Sid:
 	ldr		R4,[R9,#PSG_Paula_taille_sample_en_cours-PSG_structure_PSG]
 	mov		R4,R4,lsl #16
 
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_fill_dma_buffer_voice4_Sinus_Sid_boucle_remplissage:
 	
@@ -3201,6 +3354,8 @@ PSG_fill_dma_buffer_voice4_Sinus_Sid_pas_de_fin_sample:
 	subs	R7,R7,#1
 	bgt		PSG_fill_dma_buffer_voice4_Sinus_Sid_boucle_remplissage
 
+	sub		R6,R6,#3
+	str		R6,[R9,#PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL-PSG_structure_PSG]
 	str		R3,[R9,#PSG_Paula_offset_sample_en_cours-PSG_structure_PSG]
 	
 	mov		pc,lr
@@ -3245,8 +3400,7 @@ PSG_preparation_enveloppe_pour_la_VBL:
 
 ; c05f6e
 	ldr		R10,[R5],#4
-	mov		R7,#nb_octets_par_vbl
-
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_enveloppe_Buzzer_boucle:
 
@@ -3291,11 +3445,12 @@ PSG_preparation_enveloppe_pas_de_Buzzer:
 	ldr		R3,[R9,#PSG_flag_enveloppe-PSG_structure_PSG]
 	cmp		R3,#0
 	bne		PSG_preparation_enveloppe_pour_la_VBL_il_y_a_une_enveloppe
-	mov		R7,#nb_octets_par_vbl
-	mov		R7,R7,lsr #2				; /4
+	
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
+	;mov		R7,R7,lsr #2				; /4
 
 ; il n'y a pas d'enveloppe, on simule juste son avancÃ©e
-	mov		R2,R0,lsl #2				; R2 = increment * 4
+	;mov		R2,R0,lsl #2				; R2 = increment * 4
 PSG_preparation_enveloppe_pour_la_VBL_boucle_pas_d_enveloppe:
 	add		R1,R1,R2
 	subs	R7,R7,#1
@@ -3308,7 +3463,7 @@ PSG_preparation_enveloppe_pour_la_VBL_il_y_a_une_enveloppe:
 	ldr		R10,[R9,#PSG_pointeur_vers_enveloppe_en_cours-PSG_structure_PSG]
 	ldr		R11,[R9,#PSG_pointeur_buffer_enveloppe_calculee_pour_cette_VBL-PSG_structure_PSG]
 ; parcours de l'enveloppe Ã  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 PSG_preparation_enveloppe_pour_la_VBL_boucle_creation_enveloppe:
 
 	adds	R1,R1,R0				; incremente avec l'increment de frequence d'enveloppe
@@ -3349,7 +3504,7 @@ PSG_mixage_Noise_et_Tone_voie_A:
 PSG_mixage_Noise_et_Tone_voie_A_pas_increment_a_zero:
 
 	
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 
 	ldrb	R4,[R12,#PSG_register7-PSG_structure_PSG]				; R7 = mixer settings
 	and		R5,R4,#0b000001					; Tone channel A						= NT / 0=Noise+Tone, 1=Noise, 2=Tone, 3=rien/$FF
@@ -3385,7 +3540,7 @@ PSG_mixage_Noise_et_Tone_voie_B:
 	mov		R1,#-1
 PSG_mixage_Noise_et_Tone_voie_B_pas_increment_a_zero:
 	
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 
 	ldrb	R4,[R12,#PSG_register7-PSG_structure_PSG]				; R7 = mixer settings
 	and		R5,R4,#0b000010					; Tone channel B
@@ -3421,7 +3576,7 @@ PSG_mixage_Noise_et_Tone_voie_C:
 	mov		R1,#-1
 PSG_mixage_Noise_et_Tone_voie_C_pas_increment_a_zero:
 	
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R12,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 
 	ldrb	R4,[R12,#PSG_register7-PSG_structure_PSG]				; R7 = mixer settings
 	and		R5,R4,#0b000100					; Tone channel C
@@ -3483,13 +3638,13 @@ PSG_routines_mixage_Noise_onde_carree_routine2:
 	mov		R2,#0
 	str		R2,[R9]					; flag Tone = 0
 
-	mov		R7,R7,lsr #2							; divisÃ© par 4 car str.l
-	mov		R0,R0,lsl #2							; increment *4 car on fait des str.l
+	;mov		R7,R7,lsr #2							; divisÃ© par 4 car str.l
+	;mov		R0,R0,lsl #2							; increment *4 car on fait des str.l
 
 PSG_boucle_mixage_Noise_et_Onde_carree_routine2:
 	adds	R1,R1,R0
-	ldr		R3,[R12],#4								; on lit le noise
-	str		R3,[R11],#4								; on le copie directement
+	ldrb	R3,[R12],#1								; on lit le noise
+	strb	R3,[R11],#1								; on le copie directement
 	subs	R7,R7,#1
 	bgt		PSG_boucle_mixage_Noise_et_Onde_carree_routine2
 	mov		pc,lr	
@@ -3518,12 +3673,12 @@ PSG_routines_mixage_Noise_onde_carree_routine4:
 	str		R2,[R9]					; flag Tone = 0
 
 	mov		R3,#0xFFFFFFFF
-	mov		R7,R7,lsr #2							; divisÃ© par 4 car str.l
-	mov		R0,R0,lsl #2							; increment *4 car on fait des str.l
+	;mov		R7,R7,lsr #2							; divisÃ© par 4 car str.l
+	;mov		R0,R0,lsl #2							; increment *4 car on fait des str.l
 
 PSG_boucle_mixage_Noise_et_Onde_carree_routine4:
 	adds	R1,R1,R0
-	str		R3,[R11],#4
+	strb	R3,[R11],#1
 	subs	R7,R7,#1
 	bgt		PSG_boucle_mixage_Noise_et_Onde_carree_routine4	
 	mov		pc,lr
@@ -3555,7 +3710,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_A_SID:
 
 ; - mixage
 ; parcours du sample DG Ã  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_SID_A_boucle:
 
@@ -3632,7 +3787,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_A_continue:
 
 ; - mixage
 ; parcours du sample DG Ã  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_DG_A_boucle:
 
@@ -3682,7 +3837,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_B_SID:
 
 ; - mixage
 ; parcours du sample SID a  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_SID_B_boucle:
 
@@ -3757,7 +3912,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_B_continue:
 
 ; - mixage
 ; parcours du sample DG Ã  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_DG_B_boucle:
 
@@ -3810,7 +3965,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_C_SID:
 
 ; - mixage
 ; parcours du sample SID a  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_SID_C_boucle:
 
@@ -3884,7 +4039,7 @@ PSG_creation_buffer_effet_digidrum_ou_Sinus_Sid_channel_C_continue:
 
 ; - mixage
 ; parcours du sample DG Ã  la bonne frÃ©quence
-	mov		R7,#nb_octets_par_vbl
+	ldr		R7,[R9,#PSG_nb_octet_a_produire-PSG_structure_PSG]
 	
 PSG_preparation_DG_C_boucle:
 
@@ -3976,25 +4131,31 @@ PSG_tables_de_16_volumes:
 	;.byte		00,01,02,03,05,8,12,17,19,27,34,43,50,60,72,85
 ; le YM est logarithmique
 
-	.ifeq		VOLUMES_ORIGINE=1
+	.if		VOLUMES_ORIGINE = 1
 		.byte		0x00,0x00,0x00,0x00,0x01,0x02,0x02,0x04,0x05,0x08,0x0B,0x10,0x18,0x22,0x37,0x55
 	.endif
-	.ifeq		VOLUMES_ORIGINE=0
-		.byte		0x00,0x1,0x1,0x2,0x3,0x6,0x9,0xC,0xF,0x18,0x21,0x30,0x48,0x66,0xA5,0xFF
+	.if		VOLUMES_ORIGINE = 0
+		.byte		0x00,0x01,0x01,0x02,0x03,0x06,0x09,0x0C,0x0F,0x18,0x21,0x30,0x48,0x66,0xA5,0xFF
 	.endif
 
 	.p2align     2
 PSG_tables_de_16_volumes_DG:
-	.ifeq		VOLUMES_ORIGINE=1
-		.byte		0x00,0x1,0x1,0x2,0x3,0x6,0x9,0xC,0xF,0x18,0x21,0x30,0x48,0x66,0xA5,0xFF
-	.endif
-	.ifeq		VOLUMES_ORIGINE=0
+	.if		VOLUMES_ORIGINE = 1
 		.byte		0x00,0x00,0x00,0x00,0x01,0x02,0x02,0x04,0x05,0x08,0x0B,0x10,0x18,0x22,0x37,0x55
 	.endif
+	.if		VOLUMES_ORIGINE = 0
+		.byte		0x00,0x01,0x01,0x02,0x03,0x06,0x09,0x0C,0x0F,0x18,0x21,0x30,0x48,0x66,0xA5,0xFF
+	.endif
+
 	.p2align	2
 	
 PSG_compteur_frames:				.long		0
 PSG_compteur_frames_restantes:		.long		0
+PSG_nb_octet_par_run_de_replay:		.long		0
+PSG_nb_octets_pour_cette_VBL:		.long		0
+PSG_nb_octet_a_produire:			.long		0
+PSG_nb_octet_restant_avant_prochain_replay_complet:				.long		0
+PSG_pointeur_position_actuelle_remplissage_buffer_DMA_audio_VBL:		.long		0
 
 
 ; digidrums
@@ -4303,11 +4464,14 @@ PSG_sample_silence:
 	.endr
 
 YM7packed:
+	.incbin			"505_Oxygene.ym7"							; 51 hz
+	;.incbin			"UltraSyd_Thunderdome.ym7"					; 69 HZ
+	;.incbin			"Tao_Ultimate_Medley_Part_1.ym7"		; 200 HZ
 	;.incbin			"Gwem_Stardust_Memory.ym7"				; D/Sinus Sid + Sid
-	;.incbin			"Dma_Sc_Galaxy_Trip.ym7"				; D/Sinus Sid + Sid / impose divisions dans SID, pas jouable actuellement
+	;.incbin			"Dma_Sc_Galaxy_Trip.ym7"				; D/Sinus Sid + Sid 
 	;.incbin			"505_Robost.ym7"						; D/sinus Sid
-	;.incbin			"Cube_Bullet_Sequence.ym7"				; SID + Buzzer
-	.incbin			"Tomchi_Sidified.ym7"					; SID
+	; .incbin			"Cube_Bullet_Sequence.ym7"				; SID + Buzzer
+	;.incbin			"Tomchi_Sidified.ym7"					; SID
 	;.incbin		"Mad_Max_Buzzer.ym7"					; YM7 buzzer + SID
 	;.incbin		"DMA_Sc_Fantasia_main.ym7"					; YM7 SID
 	;.incbin		"Furax_Virtualescape_main.ym7"				; YM7 SID

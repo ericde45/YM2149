@@ -16,7 +16,7 @@
 .equ OS_ConvertCardinal4, 0xd8	
 .equ OS_EnterOS, 0x16						; supervisor
 .equ OS_supervisor, 0x16						; supervisor
-
+.equ OS_ScreenMode, 0x65
 
 .equ OS_Module, 0x1E
 
